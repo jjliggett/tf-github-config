@@ -16,16 +16,10 @@ resource "github_repository" "tf-github-config" {
   }
 }
 
-// Enable after pushing code
-//resource "github_branch" "tf-github-config-root" {
-//  repository = github_repository.tf-github-config.name
-//  branch = "root"
-//}
-//
-//resource "github_branch_default" "tf-github-branch-default" {
-//  repository = github_repository.tf-github-config.name
-//  branch = github_branch.tf-github-config-root.branch
-//}
+resource "github_branch_default" "tf-github-branch-default" {
+  repository = github_repository.tf-github-config.name
+  branch = "root"
+}
 
 resource "github_branch_protection" "tf-github-default-protection" {
   repository_id = github_repository.tf-github-config.name
