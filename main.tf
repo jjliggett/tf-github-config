@@ -33,7 +33,7 @@ resource "github_branch_protection" "tf-github-default-protection" {
 resource "github_branch_protection" "tf-github-root-protection" {
   repository_id = github_repository.tf-github-config.name
   pattern = "root"
-  enforce_admins = true
+  enforce_admins = false
   allows_deletions = false
   allows_force_pushes = false
   require_signed_commits = true
