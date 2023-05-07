@@ -50,8 +50,45 @@ resource "github_repository" "jjversion" {
   }
 }
 
+resource "github_repository" "CurrentTimeApp" {
+  name                   = "CurrentTimeApp"
+  description            = "A .NET 7 Blazor WASM and MAUI Blazor application that displays the time and the next time change."
+  allow_merge_commit     = false
+  allow_squash_merge     = true
+  allow_rebase_merge     = true
+  delete_branch_on_merge = true
+  archive_on_destroy     = true
+  has_downloads          = true
+  has_issues             = true
+  has_projects           = true
+  has_wiki               = true
+  vulnerability_alerts   = true
+  topics = [
+    "dotnet",
+    "webassembly",
+    "maui",
+    "blazor",
+    "blazor-wasm",
+    "maui-blazor"
+  ]
+  pages {
+    source {
+      branch = "gh-pages"
+      path   = "/"
+    }
+  }
+  security_and_analysis {
+    secret_scanning {
+      status = "enabled"
+    }
+    secret_scanning_push_protection {
+      status = "enabled"
+    }
+  }
+}
+
 locals {
-  repositories = toset(["tf-github-config", "jjversion"])
+  repositories = toset(["tf-github-config", "jjversion", "CurrentTimeApp"])
 }
 
 resource "github_branch_default" "tf-github-branch-default" {
