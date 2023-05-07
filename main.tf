@@ -85,18 +85,3 @@ resource "github_branch_protection" "tf-github-root-protection" {
     require_last_push_approval      = true
   }
 }
-
-moved {
-  from = github_branch_default.tf-github-branch-default
-  to   = github_branch_default.tf-github-branch-default["tf-github-config"]
-}
-
-moved {
-  from = github_branch_protection.tf-github-default-protection
-  to   = github_branch_protection.tf-github-default-protection["tf-github-config"]
-}
-
-moved {
-  from = github_branch_protection.tf-github-root-protection
-  to   = github_branch_protection.tf-github-root-protection["tf-github-config"]
-}
