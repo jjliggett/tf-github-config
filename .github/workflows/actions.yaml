@@ -1,0 +1,25 @@
+name: actions
+on:
+  push:
+    paths-ignore:
+      - README.md
+      - LICENSE.md
+      - 'docs/**'
+    branches:
+      - root
+  pull_request:
+    paths-ignore:
+      - README.md
+      - LICENSE.md
+      - 'docs/**'
+  workflow_dispatch:
+
+jobs:
+  actions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+        with:
+          fetch-depth: 0
+      - run: git log --oneline
+      - run: make format-check
