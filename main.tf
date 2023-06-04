@@ -183,3 +183,10 @@ resource "github_branch_protection" "tf-github-root-protection" {
     require_last_push_approval      = true
   }
 }
+
+resource "github_branch_protection" "tf-github-gh-pages" {
+  repository_id = "CurrentTimeApp"
+  pattern = "gh-pages"
+  require_signed_commits = false
+  required_linear_history = true
+}
