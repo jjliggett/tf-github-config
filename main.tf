@@ -148,6 +148,43 @@ resource "github_repository" "CurrentTimeApp" {
   }
 }
 
+resource "github_repository" "CurrentTimeApp_dev_env" {
+  name                   = "CurrentTimeApp-dev-env"
+  description            = "Development instance of the CurrentTimeApp for testing purposes"
+  allow_merge_commit     = false
+  allow_squash_merge     = true
+  allow_rebase_merge     = true
+  delete_branch_on_merge = true
+  archive_on_destroy     = true
+  has_downloads          = false
+  has_issues             = false
+  has_projects           = false
+  has_wiki               = true
+  vulnerability_alerts   = true
+  topics = [
+    "dotnet",
+    "webassembly",
+    "maui",
+    "blazor",
+    "blazor-wasm",
+    "maui-blazor"
+  ]
+  pages {
+    source {
+      branch = "gh-pages"
+      path   = "/"
+    }
+  }
+  security_and_analysis {
+    secret_scanning {
+      status = "enabled"
+    }
+    secret_scanning_push_protection {
+      status = "enabled"
+    }
+  }
+}
+
 locals {
   repositories = toset(["tf-github-config", "jjversion", "jjversion-action", "jjversion-gha-output", "CurrentTimeApp"])
 }
@@ -189,4 +226,12 @@ resource "github_branch_protection" "tf-github-gh-pages" {
   pattern = "gh-pages"
   require_signed_commits = false
   required_linear_history = true
+}
+
+resource "github_branch_protection" "tf-github-gh-pages-dev-env" {
+  repository_id = "CurrentTimeApp-dev-env"
+  pattern = "gh-pages"
+  require_signed_commits = false
+  required_linear_history = false
+  allows_force_pushes = true
 }
