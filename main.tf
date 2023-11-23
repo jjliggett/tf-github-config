@@ -70,7 +70,6 @@ resource "github_repository" "jjversion-action" {
     "devops",
     "semver",
     "versioning",
-    "hacktoberfest",
     "github-actions",
     "github-action",
     "versioning-workflow"
@@ -98,9 +97,6 @@ resource "github_repository" "jjversion-gha-output" {
   has_projects           = true
   has_wiki               = true
   vulnerability_alerts   = true
-  topics = [
-    "hacktoberfest"
-  ]
   security_and_analysis {
     secret_scanning {
       status = "enabled"
