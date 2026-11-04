@@ -85,7 +85,7 @@ pub fn sign(secret: &str, body: &[u8]) -> String {
     format!("sha256={}", hex::encode(m.finalize().into_bytes()))
 }
 
-const NOTIFY_ON: &[&str] = &["planned", "applied", "planned_and_finished", "errored", "discarded", "canceled"];
+const NOTIFY_ON: &[&str] = &["planned", "applied", "planned_and_finished", "finished", "errored", "discarded", "canceled"];
 
 /// Background task: turn run events into webhook deliveries.
 pub async fn sender(app: AppRef) {

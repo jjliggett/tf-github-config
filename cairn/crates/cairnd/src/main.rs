@@ -15,6 +15,7 @@ mod policy;
 mod registry;
 mod registry_gpg;
 mod runner;
+mod schedule;
 mod store;
 mod util;
 mod vcs;
@@ -127,6 +128,7 @@ async fn serve(cfg: app::Config, cpus: usize, started: Instant) -> Result<()> {
         policies: Default::default(),
         jwt_cache: Default::default(),
         run_tokens: Default::default(),
+        schedule_changed: Default::default(),
         url_key,
     });
 
@@ -135,6 +137,7 @@ async fn serve(cfg: app::Config, cpus: usize, started: Instant) -> Result<()> {
     tokio::spawn(runner::scheduler_loop(app.clone()));
     tokio::spawn(notify::sender(app.clone()));
     tokio::spawn(api::vcs::reporter(app.clone()));
+    tokio::spawn(schedule::timer(app.clone()));
     tracing::info!(
         listen = %cfg.listen,
         data = %cfg.data.display(),

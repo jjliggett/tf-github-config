@@ -76,6 +76,9 @@ enum Cmd {
     /// Policies as code (Rego): plan, approval, login, push, trigger, task, notification.
     #[command(subcommand)]
     Policy(policy::PolicyCmd),
+    /// Schedules: drift detection, recurring runs and tasks, destroy at a time.
+    #[command(subcommand)]
+    Schedule(ScheduleCmd),
     /// Private module registry.
     #[command(subcommand)]
     Module(registry::ModuleCmd),
@@ -164,6 +167,31 @@ enum StackCmd {
     Delete {
         #[command(flatten)]
         sel: StackSel,
+    },
+    /// Destroy everything the stack manages (tracked run with `-destroy`).
+    Destroy {
+        #[command(flatten)]
+        sel: StackSel,
+        /// Apply without asking.
+        #[arg(long)]
+        auto_confirm: bool,
+        #[arg(short, long)]
+        follow: bool,
+    },
+    /// Run one tofu command against the stack's state: `cairn stack task -s net -- state list`.
+    Task {
+        #[command(flatten)]
+        sel: StackSel,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+        command: Vec<String>,
+    },
+    /// Check for drift between the deployed configuration and reality.
+    Drift {
+        #[command(flatten)]
+        sel: StackSel,
+        /// Apply the deployed configuration if drift is found.
+        #[arg(long)]
+        reconcile: bool,
     },
     /// Start a tracked run from the head of the stack's VCS branch.
     Sync {
@@ -299,6 +327,42 @@ enum RunCmd {
     },
     /// Policy evaluations and reviews of a run.
     Policies { id: String },
+}
+
+#[derive(Subcommand)]
+enum ScheduleCmd {
+    List {
+        #[command(flatten)]
+        sel: StackSel,
+    },
+    /// `cairn schedule create -s net --kind drift --cron "*/30 * * * *" --reconcile`
+    Create {
+        #[command(flatten)]
+        sel: StackSel,
+        /// drift, tracked, task or destroy
+        #[arg(long)]
+        kind: String,
+        /// 5-field cron expression (UTC), or @hourly/@daily/@weekly/@monthly.
+        #[arg(long, group = "when", required = true)]
+        cron: Option<String>,
+        /// One-shot time (RFC 3339), e.g. a destroy at the end of a demo.
+        #[arg(long, group = "when", required = true)]
+        at: Option<String>,
+        /// drift: apply the deployed configuration when drift is found.
+        #[arg(long)]
+        reconcile: bool,
+        /// task: the tofu command.
+        #[arg(long)]
+        command: Option<String>,
+        /// destroy: wait for confirmation instead of applying.
+        #[arg(long)]
+        no_auto_apply: bool,
+    },
+    Delete {
+        #[command(flatten)]
+        sel: StackSel,
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -484,6 +548,7 @@ fn dispatch(c: &Client, out: &Out, cmd: &Cmd) -> Result<u8> {
         Cmd::Webhook(cmd) => policy::webhook(c, out, cmd)?,
         Cmd::Vcs(cmd) => vcs::vcs(c, out, cmd)?,
         Cmd::Module(cmd) => registry::module(c, out, cmd)?,
+        Cmd::Schedule(cmd) => schedule(c, out, cmd)?,
         Cmd::Provider(cmd) => registry::provider(c, out, cmd)?,
         Cmd::Stack(s) => return stack(c, out, s),
         Cmd::Run(r) => return run_cmd(c, out, r),
@@ -522,6 +587,25 @@ fn stack(c: &Client, out: &Out, cmd: &StackCmd) -> Result<u8> {
                 "name": name, "space": space, "description": description, "engine_version": engine_version,
                 "auto_apply": auto_apply, "project_root": project_root, "labels": labels, "vcs": vcs}))?;
             out.object(&v, &["id", "name", "space", "auto_apply"]);
+        }
+        StackCmd::Destroy { sel, auto_confirm, follow: f } => {
+            let r = c.send("POST", &sel.path("/runs"), &json!({"kind": "destroy", "auto_apply": auto_confirm,
+                                                               "message": "Destroy requested from the CLI"}))?;
+            let r = if *f { follow(c, out, &r, 0)?.1 } else { c.wait_resting(r["id"].as_str().unwrap_or_default(), Duration::from_secs(24 * 3600))? };
+            report(out, &r);
+            return Ok(exit_for(&r, false));
+        }
+        StackCmd::Task { sel, command } => {
+            let r = c.send("POST", &sel.path("/runs"), &json!({"kind": "task", "command": command}))?;
+            let r = follow(c, out, &r, 0)?.1;
+            report(out, &r);
+            return Ok(exit_for(&r, false));
+        }
+        StackCmd::Drift { sel, reconcile } => {
+            let r = c.send("POST", &sel.path("/runs"), &json!({"kind": "drift", "reconcile": reconcile}))?;
+            let r = c.wait_resting(r["id"].as_str().unwrap_or_default(), Duration::from_secs(24 * 3600))?;
+            report(out, &r);
+            return Ok(if r["has_changes"] == true { EXIT_CHANGES } else { exit_for(&r, false) });
         }
         StackCmd::Sync { sel, follow: f } => {
             let r = c.send("POST", &sel.path("/sync"), &json!({}))?;
@@ -658,6 +742,24 @@ fn report(out: &Out, r: &Value) {
     } else {
         println!("\n{}", summary(r));
     }
+}
+
+fn schedule(c: &Client, out: &Out, cmd: &ScheduleCmd) -> Result<()> {
+    match cmd {
+        ScheduleCmd::List { sel } => {
+            let v = c.get(&sel.path("/schedules"))?;
+            out.table(&v, &v["items"], &[("ID", "id"), ("KIND", "kind"), ("CRON", "cron"), ("AT", "at"), ("NEXT", "next_run_at"), ("LAST RUN", "last_run_id"), ("ERROR", "last_error")]);
+        }
+        ScheduleCmd::Create { sel, kind, cron, at, reconcile, command, no_auto_apply } => {
+            let v = c.send("POST", &sel.path("/schedules"), &json!({"kind": kind, "cron": cron, "at": at, "reconcile": reconcile,
+                "command": command, "auto_apply": !no_auto_apply}))?;
+            out.object(&v, &["id", "kind", "cron", "at", "next_run_at"]);
+        }
+        ScheduleCmd::Delete { sel, id } => {
+            c.delete(&sel.path(&format!("/schedules/{id}")))?;
+        }
+    }
+    Ok(())
 }
 
 fn exit_for(r: &Value, detailed: bool) -> u8 {

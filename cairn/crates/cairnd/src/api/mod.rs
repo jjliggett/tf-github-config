@@ -4,6 +4,7 @@ pub mod identity;
 pub mod native;
 pub mod policies;
 pub mod registry;
+pub mod schedules;
 pub mod tfe;
 pub mod vcs;
 
@@ -84,6 +85,8 @@ pub fn router(app: AppRef) -> Router {
         .route("/vcs", get(vcs::list).post(vcs::create))
         .route("/vcs/{id}", get(vcs::get).delete(vcs::delete))
         .route("/stacks/{id}/sync", post(vcs::sync))
+        .route("/stacks/{id}/schedules", get(schedules::list).post(schedules::create))
+        .route("/stacks/{id}/schedules/{sid}", axum::routing::delete(schedules::delete))
         .route("/spaces/{space}/webhooks", get(policies::list_webhooks).post(policies::create_webhook))
         .route("/spaces/{space}/webhooks/{id}", axum::routing::delete(policies::delete_webhook))
         .route("/audit", get(identity::audit))

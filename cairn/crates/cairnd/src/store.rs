@@ -42,6 +42,9 @@ pub struct Stack {
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vcs: Option<StackVcs>,
+    /// Latest drift detection result: `{detected, run_id, at}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drift: Option<Value>,
 }
 
 /// Where a stack's code comes from.
@@ -73,6 +76,9 @@ pub struct Run {
     pub error: Option<String>,
     pub created_at: String,
     pub status_times: Value,
+    /// Kind-specific parameters: `{command}` for tasks, `{reconcile}` for drift.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<Value>,
     /// VCS origin: `{integration, repo, sha, branch, pr}` (None for uploads).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<Value>,
@@ -101,7 +107,7 @@ pub fn count_instances(state: &Value) -> i64 {
 }
 
 pub fn is_terminal(status: &str) -> bool {
-    matches!(status, "applied" | "planned_and_finished" | "discarded" | "errored" | "canceled")
+    matches!(status, "applied" | "planned_and_finished" | "finished" | "discarded" | "errored" | "canceled")
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -191,7 +197,7 @@ pub fn list_spaces(c: &Connection) -> Result<Vec<Space>> {
 
 const STACK_COLS: &str = "s.id, s.space_id, sp.name, s.name, s.description, s.engine_version, s.auto_apply,
     s.project_root, s.labels, s.lock_id, s.lock_info, s.current_state_id, s.latest_run_id,
-    s.created_at, s.updated_at, s.vcs_id, s.repo, s.branch, s.pr_apply";
+    s.created_at, s.updated_at, s.vcs_id, s.repo, s.branch, s.pr_apply, s.drift";
 
 fn stack_row(r: &Row) -> rusqlite::Result<Stack> {
     let labels: String = r.get(8)?;
@@ -223,7 +229,31 @@ fn stack_row(r: &Row) -> rusqlite::Result<Stack> {
             }),
             None => None,
         },
+        drift: r.get::<_, Option<String>>(19)?.and_then(|s| serde_json::from_str(&s).ok()),
     })
+}
+
+pub fn set_stack_drift(c: &Connection, id: &str, drift: &Value) -> Result<()> {
+    c.execute("UPDATE stacks SET drift = ?2 WHERE id = ?1", params![id, drift.to_string()])?;
+    Ok(())
+}
+
+/// Plan-only kinds: no stack lock, never apply.
+pub fn is_proposed(kind: &str) -> bool {
+    matches!(kind, "proposed" | "drift")
+}
+
+/// Configuration of the stack's latest tracked run that got through planning
+/// (what drift detection and scheduled applies should use).
+pub fn last_tracked_config(c: &Connection, stack_id: &str) -> Result<Option<String>> {
+    Ok(c
+        .query_row(
+            "SELECT config_id FROM runs WHERE stack_id = ?1 AND kind = 'tracked' AND config_id IS NOT NULL
+             AND status IN ('applied', 'planned_and_finished') ORDER BY seq DESC LIMIT 1",
+            [stack_id],
+            |r| r.get(0),
+        )
+        .optional()?)
 }
 
 /// Set or clear a stack's VCS source.
@@ -405,7 +435,7 @@ pub fn mark_config_uploaded(c: &Connection, id: &str, sha: &str, size: i64) -> R
 // ---------------------------------------------------------------- runs
 
 const RUN_COLS: &str = "id, stack_id, kind, status, config_id, auto_apply, message, triggered_by, has_changes,
-    adds, changes, destroys, plan_summary, error, created_at, status_times, seq, approval, source";
+    adds, changes, destroys, plan_summary, error, created_at, status_times, seq, approval, source, params";
 
 fn run_row(r: &Row) -> rusqlite::Result<Run> {
     let st: String = r.get(15)?;
@@ -429,6 +459,7 @@ fn run_row(r: &Row) -> rusqlite::Result<Run> {
         seq: r.get(16)?,
         approval: r.get(17)?,
         source: r.get::<_, Option<String>>(18)?.and_then(|s| serde_json::from_str(&s).ok()),
+        params: r.get::<_, Option<String>>(19)?.and_then(|s| serde_json::from_str(&s).ok()),
     })
 }
 
@@ -440,6 +471,7 @@ pub struct NewRun<'a> {
     pub message: &'a str,
     pub triggered_by: &'a str,
     pub source: Option<&'a Value>,
+    pub params: Option<&'a Value>,
 }
 
 pub fn create_run(c: &Connection, n: &NewRun) -> Result<Run> {
@@ -447,9 +479,10 @@ pub fn create_run(c: &Connection, n: &NewRun) -> Result<Run> {
     let t = now();
     let times = serde_json::json!({ "plan_queued": t }).to_string();
     c.execute(
-        "INSERT INTO runs (id, stack_id, kind, status, config_id, auto_apply, message, triggered_by, created_at, status_times, source)
-         VALUES (?1, ?2, ?3, 'plan_queued', ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        params![id, n.stack_id, n.kind, n.config_id, n.auto_apply, n.message, n.triggered_by, t, times, n.source.map(|v| v.to_string())],
+        "INSERT INTO runs (id, stack_id, kind, status, config_id, auto_apply, message, triggered_by, created_at, status_times, source, params)
+         VALUES (?1, ?2, ?3, 'plan_queued', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![id, n.stack_id, n.kind, n.config_id, n.auto_apply, n.message, n.triggered_by, t, times,
+                n.source.map(|v| v.to_string()), n.params.map(|v| v.to_string())],
     )?;
     c.execute("UPDATE stacks SET latest_run_id = ?2 WHERE id = ?1", params![n.stack_id, id])?;
     Ok(get_run(c, &id)?.expect("just inserted"))
@@ -489,7 +522,7 @@ pub fn queued_runs(c: &Connection) -> Result<Vec<Run>> {
 /// Non-terminal runs (used at startup for recovery and to rebuild stack holds).
 pub fn active_runs(c: &Connection) -> Result<Vec<Run>> {
     let sql = format!(
-        "SELECT {RUN_COLS} FROM runs WHERE status NOT IN ('applied','planned_and_finished','discarded','errored','canceled') ORDER BY seq"
+        "SELECT {RUN_COLS} FROM runs WHERE status NOT IN ('applied','planned_and_finished','finished','discarded','errored','canceled') ORDER BY seq"
     );
     let mut st = c.prepare_cached(&sql)?;
     let rows = st.query_map([], run_row)?.collect::<rusqlite::Result<Vec<_>>>()?;

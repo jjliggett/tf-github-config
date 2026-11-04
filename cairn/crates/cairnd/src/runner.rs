@@ -106,13 +106,13 @@ fn dispatch(app: &AppRef) -> Result<()> {
         .db
         .read(store::active_runs)?
         .into_iter()
-        .filter(|r| r.kind != "proposed" && r.status != "plan_queued")
+        .filter(|r| !store::is_proposed(&r.kind) && r.status != "plan_queued")
         .map(|r| r.stack_id)
         .collect();
 
     for run in queued {
         let apply = run.status == "apply_queued";
-        if !apply && run.kind != "proposed"
+        if !apply && !store::is_proposed(&run.kind)
             && held.contains(&run.stack_id) {
                 continue;
             }
@@ -123,7 +123,7 @@ fn dispatch(app: &AppRef) -> Result<()> {
         if !app.db.write(|c| store::transition(c, &run.id, &[from], to))? {
             continue; // canceled meanwhile
         }
-        if run.kind != "proposed" {
+        if !store::is_proposed(&run.kind) {
             held.insert(run.stack_id.clone());
         }
         publish(app, &run.stack_id, &run.id, to);
@@ -220,7 +220,8 @@ impl Exec {
 
     async fn plan_and_maybe_apply(&mut self) -> Result<()> {
         let started = Instant::now();
-        let tracked = self.run.kind != "proposed";
+        let tracked = !store::is_proposed(&self.run.kind);
+        let destroy = self.run.kind == "destroy";
         self.log("info", &format!("cairn: {} run {} on stack {}", self.run.kind, self.run.id, self.stack.name));
         if tracked {
             let info = json!({"ID": self.run.id, "Operation": "OperationTypePlan", "Who": "cairn run",
@@ -239,6 +240,9 @@ impl Exec {
         if code != 0 {
             bail!("tofu init failed (exit {code})");
         }
+        if self.run.kind == "task" {
+            return self.task(&bin, &env).await;
+        }
         let chain = self.app.space_chain(&self.stack.space_id);
         let (plan_pols, approval_pols) = self.app.db.read(|c| {
             Ok((
@@ -255,6 +259,9 @@ impl Exec {
         let mut args = vec!["plan", "-input=false", "-json", "-detailed-exitcode"];
         if tracked || !plan_pols.is_empty() {
             args.push("-out=.cairn.tfplan");
+        }
+        if destroy {
+            args.push("-destroy");
         }
         if !tracked {
             args.push("-lock=false");
@@ -296,6 +303,9 @@ impl Exec {
             return evaluate_approval(&self.app, &run_id).await;
         }
 
+        if self.run.kind == "drift" {
+            self.record_drift(has_changes)?;
+        }
         if !tracked || !has_changes {
             let sid = self.stack.id.clone();
             self.app.db.write(|c| {
@@ -330,8 +340,12 @@ impl Exec {
         let mut changed: Vec<Value> = Vec::new();
         let mut planned = false;
         let mut plan_secs = 0.0;
+        let mut fast_args = vec!["apply", "-input=false", "-json", "-auto-approve"];
+        if self.run.kind == "destroy" {
+            fast_args.push("-destroy");
+        }
         let code = self
-            .tofu(bin, &["apply", "-input=false", "-json", "-auto-approve"], env, |v| match v["type"].as_str() {
+            .tofu(bin, &fast_args, env, |v| match v["type"].as_str() {
                 Some("planned_change") if changed.len() < MAX_CHANGES_LISTED => {
                     let c = &v["change"];
                     changed.push(json!({"address": c["resource"]["addr"], "action": c["action"]}));
@@ -380,6 +394,59 @@ impl Exec {
             self.log("info", &format!("cairn: saved state version {} (serial {})", sv.id, sv.serial));
         }
         finish(&self.app, &stack_id, &run_id, status);
+        Ok(())
+    }
+
+    /// Task runs: one tofu command against the stack's state (with its lock).
+    async fn task(&mut self, bin: &Path, env: &[(String, String)]) -> Result<()> {
+        let cmd: Vec<String> = self.run.params.as_ref().and_then(|p| serde_json::from_value(p["command"].clone()).ok()).unwrap_or_default();
+        if cmd.is_empty() {
+            bail!("task run without a command");
+        }
+        self.log("info", &format!("cairn: task: tofu {}", cmd.join(" ")));
+        let args: Vec<&str> = cmd.iter().map(String::as_str).collect();
+        let code = self.tofu(bin, &args, env, |_| {}).await?;
+        let stored = self.store_state().await?;
+        if let Some(sv) = &stored {
+            self.log("info", &format!("cairn: saved state version {} (serial {})", sv.id, sv.serial));
+        }
+        if code != 0 {
+            bail!("task failed (exit {code})");
+        }
+        let (run_id, sid) = (self.run.id.clone(), self.stack.id.clone());
+        self.app.db.write(|c| {
+            store::transition(c, &run_id, &["planning"], "finished")?;
+            store::unlock_stack(c, &sid, Some(&run_id))?;
+            Ok(())
+        })?;
+        finish(&self.app, &sid, &run_id, "finished");
+        Ok(())
+    }
+
+    /// Drift runs: remember the result on the stack; optionally reconcile.
+    fn record_drift(&self, detected: bool) -> Result<()> {
+        let drift = json!({"detected": detected, "run_id": self.run.id, "at": now()});
+        let sid = self.stack.id.clone();
+        self.app.db.write(|c| store::set_stack_drift(c, &sid, &drift))?;
+        self.app.hub.publish(Event { kind: "stack.drift", stack_id: sid.clone(), run_id: Some(self.run.id.clone()), status: None, at: now() });
+        if !detected {
+            self.log("info", "cairn: no drift");
+            return Ok(());
+        }
+        self.log("warn", "cairn: drift detected");
+        let reconcile = self.run.params.as_ref().map(|p| p["reconcile"] == json!(true)).unwrap_or(false);
+        if reconcile {
+            let msg = format!("Reconcile drift found by {}", self.run.id);
+            let r = self.app.db.write(|c| {
+                store::create_run(c, &store::NewRun {
+                    stack_id: &sid, kind: "tracked", config_id: self.run.config_id.as_deref(), auto_apply: true,
+                    message: &msg, triggered_by: "drift:reconcile", source: None, params: None,
+                })
+            })?;
+            self.log("info", &format!("cairn: reconciling with run {}", r.id));
+            publish(&self.app, &sid, &r.id, "plan_queued");
+            self.app.sched.kick();
+        }
         Ok(())
     }
 

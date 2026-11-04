@@ -261,6 +261,25 @@ const MIGRATIONS: &[&str] = &[
         UNIQUE (version_id, os, arch)
     );
     "#,
+    // 6: schedules, drift, destroy and task runs
+    r#"
+    ALTER TABLE runs ADD COLUMN params TEXT;
+    ALTER TABLE stacks ADD COLUMN drift TEXT;
+    CREATE TABLE schedules (
+        id          TEXT PRIMARY KEY,
+        stack_id    TEXT NOT NULL REFERENCES stacks(id) ON DELETE CASCADE,
+        kind        TEXT NOT NULL,
+        cron        TEXT,
+        at          TEXT,
+        params      TEXT NOT NULL DEFAULT '{}',
+        next_run_at TEXT,
+        last_run_at TEXT,
+        last_run_id TEXT,
+        last_error  TEXT,
+        created_at  TEXT NOT NULL
+    );
+    CREATE INDEX schedules_by_next ON schedules (next_run_at);
+    "#,
 ];
 
 pub struct Db {

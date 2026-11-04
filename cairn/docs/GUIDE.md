@@ -287,3 +287,52 @@ written to its own CLI config, that can read the registry namespaces of its
 stack's space and that space's ancestors — nothing else — and is revoked
 when the run finishes. Download URLs given to OpenTofu are pre-signed and
 expire after an hour.
+
+## Drift detection, schedules, tasks and destroy
+
+**Run kinds.** Besides `proposed` and `tracked` runs, a stack can run:
+
+| Kind | What it does | Needs |
+|---|---|---|
+| `drift` | Plans the deployed configuration (the last successful tracked run's) without a lock. Changes mean reality drifted; the result is stored on the stack (`drift: {detected, run_id, at}`) and published as a `stack.drift` event. With `reconcile`, a tracked auto-applied run of the same configuration follows | planner (writer to reconcile) |
+| `destroy` | Plans and applies `-destroy` against the deployed configuration; confirm as usual or auto-apply | writer |
+| `task` | One tofu command against the stack's state, holding the stack lock: `state list`, `state rm …`, `import …`, `apply -replace=…`, `force-unlock …` … State changes are saved as a new version. Ends `finished` or `errored` | writer, and every `task` policy |
+
+```sh
+cairn stack drift -s network --space prod              # exit 4 if drift was found
+cairn stack drift -s network --space prod --reconcile
+cairn stack task -s network --space prod -- state rm 'aws_instance.legacy'
+cairn stack destroy -s preview-123 --auto-confirm
+```
+
+**Task policies** see `input.task.command` (an array) and `.line`,
+`input.stack`, and `input.principal` (`kind`, `name`, `groups`,
+`site_admin`); any `deny` refuses the task before it is queued:
+
+```rego
+package cairn
+import rego.v1
+
+deny contains "state surgery is for site admins" if {
+  input.task.command[0] == "state"
+  input.task.command[1] in {"rm", "mv", "push"}
+  not input.principal.site_admin
+}
+```
+
+**Schedules** run any of these on a cron expression (5 fields, UTC, or
+`@hourly`/`@daily`/`@weekly`/`@monthly`) or once at a given time:
+
+```sh
+cairn schedule create -s network --space prod --kind drift --cron "*/30 * * * *" --reconcile
+cairn schedule create -s network --space prod --kind task --cron "@daily" --command "state list"
+cairn schedule create -s preview-123 --kind destroy --at 2026-12-01T18:00:00Z   # tear down a demo
+cairn schedule create -s network --space prod --kind tracked --cron "0 6 * * mon"
+cairn schedule list -s network --space prod
+```
+
+Destroy schedules need admin on the space; the others need writer. The
+timer sleeps until the next due schedule (no polling); a schedule that was
+due while the server was down fires once at startup. A drift schedule is
+skipped while its previous check is still running. Each schedule records
+`last_run_id` and `last_error`.

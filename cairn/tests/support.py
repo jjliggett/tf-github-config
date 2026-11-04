@@ -135,7 +135,7 @@ class Server:
         return self.wait(r["id"]) if wait else r
 
     def wait(self, run_id, until=lambda r: r["status"] in (
-            "applied", "planned_and_finished", "discarded", "errored", "canceled", "planned"), timeout=60):
+            "applied", "planned_and_finished", "finished", "discarded", "errored", "canceled", "planned"), timeout=60):
         deadline = time.time() + timeout
         while time.time() < deadline:
             r = self.ok("GET", f"/api/v1/runs/{run_id}?wait=10")

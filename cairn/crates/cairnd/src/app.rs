@@ -133,6 +133,8 @@ pub struct App {
     pub jwt_cache: Mutex<HashMap<String, (crate::auth::Principal, std::time::Instant)>>,
     /// Run-scoped registry tokens: sha256 -> (principal, valid until).
     pub run_tokens: Mutex<HashMap<String, (crate::auth::Principal, std::time::Instant)>>,
+    /// Woken when schedules are created or deleted.
+    pub schedule_changed: tokio::sync::Notify,
     /// Key for signing pre-authorized upload URLs (process lifetime).
     pub url_key: [u8; 32],
 }

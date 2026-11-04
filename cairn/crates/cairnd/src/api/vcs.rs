@@ -317,7 +317,7 @@ async fn start_run(
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?
         .map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, format!("{e:#}")))?;
-    let cv = app.db.write(|c| store::create_config(c, &s.id, kind == "proposed", false))?;
+    let cv = app.db.write(|c| store::create_config(c, &s.id, false, kind == "proposed"))?;
     crate::api::native::save_config(app, &cv.id, &Bytes::from(tarball)).await?;
     let auto_apply = s.auto_apply || (kind == "tracked" && source["pr"].is_i64());
     enqueue_run(app, s, kind, &cv.id, auto_apply, message, by, Some(&source))

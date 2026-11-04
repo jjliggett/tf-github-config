@@ -122,7 +122,7 @@ impl Client {
 }
 
 pub fn is_resting(status: &str) -> bool {
-    matches!(status, "applied" | "planned_and_finished" | "discarded" | "errored" | "canceled" | "planned")
+    matches!(status, "applied" | "planned_and_finished" | "finished" | "discarded" | "errored" | "canceled" | "planned")
 }
 
 /// Pack a directory as .tar.gz, skipping VCS metadata, provider caches and local state.

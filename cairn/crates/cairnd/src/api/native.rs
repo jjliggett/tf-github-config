@@ -435,12 +435,11 @@ pub async fn save_config(app: &AppRef, cv_id: &str, body: &Bytes) -> ApiResult<(
 pub fn enqueue_run(
     app: &AppRef, stack: &Stack, kind: &str, config_id: &str, auto_apply: bool, message: &str, by: &str, source: Option<&Value>,
 ) -> ApiResult<Run> {
-    let run = app.db.write(|c| {
-        store::create_run(
-            c,
-            &store::NewRun { stack_id: &stack.id, kind, config_id: Some(config_id), auto_apply, message, triggered_by: by, source },
-        )
-    })?;
+    enqueue(app, stack, &store::NewRun { stack_id: &stack.id, kind, config_id: Some(config_id), auto_apply, message, triggered_by: by, source, params: None })
+}
+
+pub fn enqueue(app: &AppRef, stack: &Stack, n: &store::NewRun) -> ApiResult<Run> {
+    let run = app.db.write(|c| store::create_run(c, n))?;
     app.metrics.runs_created.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     runner::publish(app, &stack.id, &run.id, "plan_queued");
     app.sched.kick();
@@ -475,6 +474,82 @@ pub struct RunReq {
     auto_apply: Option<bool>,
     #[serde(default)]
     message: String,
+    /// Task runs: the tofu command, e.g. `state rm aws_instance.old` (string or array).
+    #[serde(default)]
+    command: Option<Value>,
+    /// Drift runs: start a tracked run when drift is found.
+    #[serde(default)]
+    reconcile: bool,
+}
+
+/// Split a task command like a shell would (quotes, no expansion); a leading
+/// `tofu`/`terraform` is dropped.
+pub fn task_command(v: &Value) -> ApiResult<Vec<String>> {
+    let mut words: Vec<String> = match v {
+        Value::Array(a) => a.iter().map(|x| x.as_str().map(str::to_string).ok_or_else(|| ApiError::bad_request("command items must be strings"))).collect::<ApiResult<_>>()?,
+        Value::String(s) => {
+            let (mut out, mut cur, mut quote, mut has) = (vec![], String::new(), None::<char>, false);
+            let mut chars = s.chars();
+            while let Some(ch) = chars.next() {
+                match (quote, ch) {
+                    (Some(q), c) if c == q => quote = None,
+                    (Some('"'), '\\') => cur.extend(chars.next()),
+                    (Some(_), c) => cur.push(c),
+                    (None, '"' | '\'') => {
+                        quote = Some(ch);
+                        has = true;
+                    }
+                    (None, '\\') => cur.extend(chars.next()),
+                    (None, c) if c.is_whitespace() => {
+                        if has || !cur.is_empty() {
+                            out.push(std::mem::take(&mut cur));
+                        }
+                        has = false;
+                    }
+                    (None, c) => cur.push(c),
+                }
+            }
+            if quote.is_some() {
+                return Err(ApiError::bad_request("unterminated quote in command"));
+            }
+            if has || !cur.is_empty() {
+                out.push(cur);
+            }
+            out
+        }
+        _ => return Err(ApiError::bad_request("command must be a string or an array")),
+    };
+    if matches!(words.first().map(String::as_str), Some("tofu" | "terraform")) {
+        words.remove(0);
+    }
+    match words.first().map(String::as_str) {
+        None => Err(ApiError::bad_request("command is empty")),
+        Some("console" | "login" | "logout" | "init") => Err(ApiError::bad_request(format!("`tofu {}` can't run as a task", words[0]))),
+        Some(w) if w.starts_with('-') => Err(ApiError::bad_request("command must start with a tofu subcommand")),
+        _ => Ok(words),
+    }
+}
+
+/// Evaluate `task` policies; any `deny` refuses the task.
+pub fn check_task_policies(app: &AppRef, s: &Stack, p: &Principal, command: &[String]) -> ApiResult<()> {
+    let chain = app.space_chain(&s.space_id);
+    let pols = app.db.read(|c| crate::policy::for_stack(c, "task", &s.id, &chain, &s.labels))?;
+    if pols.is_empty() {
+        return Ok(());
+    }
+    let input = json!({"task": {"command": command, "line": command.join(" ")},
+                       "stack": {"id": s.id, "name": s.name, "space": s.space, "labels": s.labels},
+                       "principal": {"kind": p.kind, "name": p.name, "groups": p.groups, "site_admin": p.site_admin}});
+    let denied: Vec<String> = app
+        .policies
+        .run(&pols, &input)?
+        .iter()
+        .flat_map(|v| v.set("deny").into_iter().map(move |d| format!("{}: {}", v.policy, d.as_str().map(str::to_string).unwrap_or_else(|| d.to_string()))))
+        .collect();
+    if !denied.is_empty() {
+        return Err(ApiError::new(StatusCode::FORBIDDEN, format!("task denied by policy: {}", denied.join("; "))));
+    }
+    Ok(())
 }
 
 /// Create a run. JSON body `{kind, config_id}`, or a `.tar.gz` body (upload + run in one request).
@@ -498,15 +573,32 @@ pub async fn create_run(
         RunReq { kind: q.kind.clone(), auto_apply: q.auto_apply, message: q.message.clone().unwrap_or_default(), ..Default::default() }
     };
     let kind = req.kind.as_deref().unwrap_or("tracked");
-    if !matches!(kind, "proposed" | "tracked") {
-        return Err(ApiError::bad_request("kind must be 'proposed' or 'tracked'"));
+    if !matches!(kind, "proposed" | "tracked" | "destroy" | "task" | "drift") {
+        return Err(ApiError::bad_request("kind must be proposed, tracked, destroy, task or drift"));
     }
-    if kind != "proposed" {
+    if !store::is_proposed(kind) {
         app.authz.require(&p, &s.space_id, Role::Writer)?;
+    }
+    let mut params = None;
+    if kind == "task" {
+        let cmd = task_command(req.command.as_ref().ok_or_else(|| ApiError::bad_request("task runs need a command"))?)?;
+        check_task_policies(&app, &s, &p, &cmd)?;
+        params = Some(json!({"command": cmd}));
+    } else if kind == "drift" && req.reconcile {
+        app.authz.require(&p, &s.space_id, Role::Writer)?;
+        params = Some(json!({"reconcile": true}));
+    }
+    if !is_json && matches!(kind, "task" | "drift" | "destroy") {
+        // These act on what is deployed, not on new code.
+        return Err(ApiError::bad_request(format!("{kind} runs take a JSON body (they reuse the stack's configuration)")));
     }
     let cv_id = if is_json {
         match req.config_id {
             Some(cv) => cv,
+            None if kind != "tracked" && kind != "proposed" => app
+                .db
+                .read(|c| store::last_tracked_config(c, &s.id))?
+                .map_or_else(|| latest_config(&app, &s), Ok)?,
             None => latest_config(&app, &s)?,
         }
     } else {
@@ -519,14 +611,18 @@ pub async fn create_run(
         return Err(ApiError::bad_request("configuration is not uploaded for this stack"));
     }
     let auto = req.auto_apply.unwrap_or(s.auto_apply);
-    let run = enqueue_run(&app, &s, kind, &cv.id, auto, &req.message, &p.label(), None)?;
+    let by = p.label();
+    let run = enqueue(&app, &s, &store::NewRun {
+        stack_id: &s.id, kind, config_id: Some(&cv.id), auto_apply: auto, message: &req.message, triggered_by: &by,
+        source: None, params: params.as_ref(),
+    })?;
     Ok((StatusCode::CREATED, Json(run_view(run))))
 }
 
 pub fn latest_config(app: &AppRef, s: &Stack) -> ApiResult<String> {
     let r: Option<String> = app.db.read(|c| {
         Ok(c.query_row(
-            "SELECT id FROM config_versions WHERE stack_id = ?1 AND status = 'uploaded' ORDER BY rowid DESC LIMIT 1",
+            "SELECT id FROM config_versions WHERE stack_id = ?1 AND status = 'uploaded' AND speculative = 0 ORDER BY rowid DESC LIMIT 1",
             [&s.id],
             |r| r.get(0),
         )
@@ -620,7 +716,7 @@ pub async fn discard_run(State(app): State<AppRef>, p: Principal, Path(id): Path
 
 pub async fn cancel_run(State(app): State<AppRef>, p: Principal, Path(id): Path<String>) -> ApiResult<Json<RunView>> {
     let run = authorized_run(&app, &p, &id, Role::Planner)?;
-    if run.kind != "proposed" {
+    if !store::is_proposed(&run.kind) {
         authorized_run(&app, &p, &id, Role::Writer)?;
     }
     if !stop_run(&app, &run, false)? {
