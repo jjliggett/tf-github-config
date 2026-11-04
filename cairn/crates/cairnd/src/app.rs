@@ -55,6 +55,18 @@ pub struct Config {
     /// stack's own `GOGC` env variable wins.
     #[arg(long, env = "CAIRN_ENGINE_GOGC", default_value_t = 50)]
     pub engine_gogc: u32,
+    /// Where state, configurations and registry artifacts live: file:///path (default
+    /// <data>/blobs), s3://bucket/prefix?region=…&endpoint=…, or azblob://account/container/prefix.
+    #[arg(long, env = "CAIRN_BLOB_STORE")]
+    pub blob_store: Option<String>,
+    /// Store state and configurations unencrypted (they are encrypted at rest by default).
+    #[arg(long, env = "CAIRN_NO_BLOB_ENCRYPTION", num_args = 0..=1, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new())]
+    pub no_blob_encryption: bool,
+    /// Serve HTTPS with this PEM certificate chain (needs --tls-key).
+    #[arg(long, env = "CAIRN_TLS_CERT", requires = "tls_key")]
+    pub tls_cert: Option<PathBuf>,
+    #[arg(long, env = "CAIRN_TLS_KEY", requires = "tls_cert")]
+    pub tls_key: Option<PathBuf>,
     /// OpenID Connect issuer URL (e.g. https://authentik.example.com/application/o/cairn/).
     #[arg(long, env = "CAIRN_OIDC_ISSUER")]
     pub oidc_issuer: Option<String>,
@@ -106,7 +118,8 @@ pub struct App {
     pub db: Db,
     pub hub: Hub,
     pub engines: Engines,
-    pub secrets: SecretBox,
+    pub secrets: Arc<SecretBox>,
+    pub blobs: crate::blob::BlobStore,
     pub sched: Scheduler,
     pub metrics: Metrics,
     /// Roles, bindings, users and tokens (in-memory snapshot).

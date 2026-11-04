@@ -65,12 +65,17 @@ def tarball(files):
 
 
 class Server:
-    def __init__(self, args=(), env=None, port=None):
+    def __init__(self, args=(), env=None, port=None, https=False, ca=None):
         self.dir = tempfile.mkdtemp(prefix="cairn-e2e-")
         self.port = port or free_port()
         self.extra_args = list(args)
         self.extra_env = dict(env or {})
-        self.base = f"http://127.0.0.1:{self.port}"
+        self.base = f"{'https' if https else 'http'}://127.0.0.1:{self.port}"
+        self.opener = _opener
+        if https:
+            import ssl
+            ctx = ssl.create_default_context(cafile=ca)
+            self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=ctx))
         self.proc = None
         self.start()
 
@@ -108,7 +113,7 @@ class Server:
             h["Content-Type"] = ctype or "application/json"
         r = urllib.request.Request(self.base + path, data=data, method=method, headers=h)
         try:
-            with _opener.open(r, timeout=timeout) as resp:
+            with self.opener.open(r, timeout=timeout) as resp:
                 raw = resp.read()
                 status = resp.status
         except urllib.error.HTTPError as e:

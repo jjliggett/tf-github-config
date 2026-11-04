@@ -16,6 +16,7 @@ download = ["dep:zip"]
 
 [dependencies]
 anyhow = "1"
+axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 base64 = "0.22"
 jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
@@ -24,7 +25,9 @@ chacha20poly1305 = "0.10"
 clap = { version = "4", features = ["derive", "env"] }
 flate2 = "1"
 hex = "0.4"
+hmac = "0.12"
 mimalloc = { version = "0.1", default-features = false, optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }

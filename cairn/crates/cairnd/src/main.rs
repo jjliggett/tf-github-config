@@ -3,6 +3,7 @@
 mod api;
 mod app;
 mod auth;
+mod blob;
 mod crypto;
 mod db;
 mod engine;
@@ -71,12 +72,17 @@ fn effective_cpus() -> usize {
 }
 
 async fn serve(cfg: app::Config, cpus: usize, started: Instant) -> Result<()> {
-    for sub in ["blobs/config", "blobs/state", "logs", "work", "engines", "cache/plugins"] {
+    for sub in ["logs", "work", "engines", "cache/plugins"] {
         std::fs::create_dir_all(cfg.data.join(sub)).with_context(|| format!("creating {}", cfg.data.display()))?;
     }
     let db = db::Db::open(&cfg.data.join("cairn.db"), cpus.min(4))?;
     let authz = auth::Authz::load(&db)?;
-    let secrets = crypto::SecretBox::load(&cfg.data, cfg.secret_key.as_deref())?;
+    let secrets = Arc::new(crypto::SecretBox::load(&cfg.data, cfg.secret_key.as_deref())?);
+    let blobs = blob::BlobStore::open(
+        cfg.blob_store.as_deref(),
+        cfg.data.join("blobs"),
+        (!cfg.no_blob_encryption).then(|| secrets.clone()),
+    )?;
     let engines = engine::Engines::new(
         cfg.data.join("engines"),
         cfg.tofu_bin.clone(),
@@ -108,6 +114,7 @@ async fn serve(cfg: app::Config, cpus: usize, started: Instant) -> Result<()> {
         db,
         engines,
         secrets,
+        blobs,
         sched: runner::Scheduler::new(concurrency),
         metrics: Default::default(),
         authz,
@@ -115,24 +122,46 @@ async fn serve(cfg: app::Config, cpus: usize, started: Instant) -> Result<()> {
         url_key,
     });
 
+    let blob_desc = app.blobs.describe();
     let listener = tokio::net::TcpListener::bind(cfg.listen).await.with_context(|| format!("binding {}", cfg.listen))?;
     tokio::spawn(runner::scheduler_loop(app.clone()));
     tracing::info!(
         listen = %cfg.listen,
         data = %cfg.data.display(),
         concurrency,
+        tls = cfg.tls_cert.is_some(),
+        blobs = %blob_desc,
         startup_ms = started.elapsed().as_millis() as u64,
         "cairnd ready"
     );
-    axum::serve(listener, api::router(app))
-        .with_graceful_shutdown(async {
-            let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("signal");
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {}
-                _ = term.recv() => {}
-            }
-            tracing::info!("shutting down");
-        })
-        .await?;
+    let shutdown = async {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("signal");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+        tracing::info!("shutting down");
+    };
+    let router = api::router(app);
+    match (&cfg.tls_cert, &cfg.tls_key) {
+        (Some(cert), Some(key)) => {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            let tls = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key)
+                .await
+                .with_context(|| format!("loading TLS certificate {}", cert.display()))?;
+            let handle = axum_server::Handle::new();
+            let h2 = handle.clone();
+            tokio::spawn(async move {
+                shutdown.await;
+                h2.graceful_shutdown(Some(std::time::Duration::from_secs(10)));
+            });
+            let std_listener = listener.into_std()?;
+            axum_server::from_tcp_rustls(std_listener, tls)?
+                .handle(handle)
+                .serve(router.into_make_service())
+                .await?;
+        }
+        _ => axum::serve(listener, router).with_graceful_shutdown(shutdown).await?,
+    }
     Ok(())
 }

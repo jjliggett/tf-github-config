@@ -79,7 +79,7 @@ managed runner picks it up.
 |---|---|---|
 | Server | One binary; SQLite (WAL); native `/api/v1` (spaces, stacks, variables, configs, runs, logs, outputs, state, locks, tokens, SSE events, long-poll); Prometheus `/metrics` | Postgres backend, OpenAPI document |
 | Runs | Proposed and tracked runs, auto-apply or confirm/discard, cancel (SIGINT, then kill), per-stack queue, configurable concurrency, no fixed sleeps, structured plan summaries | Destroy and task runs, dependencies, drift schedules |
-| State | Versioned, deduplicated by SHA-256; OpenTofu `http` backend with locking; serial/lineage checks | Encryption at rest for state, rollback command |
+| State & storage | Versioned, deduplicated by SHA-256; OpenTofu `http` backend with locking; serial/lineage checks; blobs on local disk, S3-compatible stores (AWS, MinIO, R2, GCS interop…) or Azure Blob; encrypted at rest by default; native TLS | Postgres for metadata, rollback command |
 | TFE API | Organizations, workspaces (with pagination), configuration versions with pre-signed uploads, runs and actions, plans and applies with logs, current state version and outputs, workspace locks | `tofu login` and the `cloud {}` block over TLS, state-version upload, the `tfe` provider, teams |
 | Identity & access | Space tree with inherited roles (reader/planner/writer/admin); users from OIDC (bearer ID tokens and browser/CLI login with PKCE); teams = IdP groups; user and service tokens with expiry; audit log; sensitive variables encrypted (ChaCha20-Poly1305) | Workload identity / OpenBao |
 | VCS, policy, registry | — | Forgejo/Gitea webhooks and PR comments (with Atlantis's lock leak fixed), Rego policies, module registry |

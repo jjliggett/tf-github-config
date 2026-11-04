@@ -413,7 +413,7 @@ pub async fn upload_cv(State(app): State<AppRef>, Path(id): Path<String>, Query(
     if cv.status != "pending" {
         return Err(ApiError::conflict("configuration already uploaded"));
     }
-    save_config(&app, &cv.id, &body)?;
+    save_config(&app, &cv.id, &body).await?;
     if cv.auto_queue {
         let s = find_ws(&app, &cv.stack_id)?;
         let kind = if cv.speculative { "proposed" } else { "tracked" };
@@ -600,8 +600,6 @@ pub async fn current_outputs(State(app): State<AppRef>, p: Principal, Path(id): 
 pub async fn download_state(State(app): State<AppRef>, p: Principal, Path(id): Path<String>) -> ApiResult<Response> {
     let sv = app.db.read(|c| store::get_state(c, &id))?.ok_or_else(|| ApiError::not_found("state version"))?;
     ws_for(&app, &p, &sv.stack_id, Role::Writer)?;
-    let bytes = tokio::fs::read(app.dir("blobs/state").join(format!("{}.json", sv.sha256)))
-        .await
-        .map_err(anyhow::Error::from)?;
+    let bytes = app.blobs.get(&format!("state/{}.json", sv.sha256)).await?.ok_or_else(|| ApiError::not_found("state blob"))?;
     Ok(([(header::CONTENT_TYPE, "application/json")], bytes).into_response())
 }

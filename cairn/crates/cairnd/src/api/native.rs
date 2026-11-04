@@ -254,7 +254,28 @@ pub async fn delete_stack(State(app): State<AppRef>, p: Principal, Path(id): Pat
     if busy {
         return Err(ApiError::conflict("stack has active runs; cancel or discard them first"));
     }
-    app.db.write(|c| store::delete_stack(c, &s.id))?;
+    // Blob keys to drop: this stack's configurations, and state blobs no other stack shares.
+    let (configs, states) = app.db.write(|c| {
+        let configs: Vec<String> = c
+            .prepare("SELECT id FROM config_versions WHERE stack_id = ?1")?
+            .query_map([&s.id], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let states: Vec<String> = c
+            .prepare(
+                "SELECT DISTINCT sha256 FROM state_versions WHERE stack_id = ?1
+                 AND sha256 NOT IN (SELECT sha256 FROM state_versions WHERE stack_id != ?1)",
+            )?
+            .query_map([&s.id], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        store::delete_stack(c, &s.id)?;
+        Ok((configs, states))
+    })?;
+    for cv in configs {
+        let _ = app.blobs.delete(&format!("config/{cv}.tar.gz")).await;
+    }
+    for sha in states {
+        let _ = app.blobs.delete(&format!("state/{sha}.json")).await;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -370,15 +391,14 @@ pub async fn delete_var(
 // ---------------------------------------------------------------- configs & runs
 
 /// Store an uploaded configuration tarball. Validates gzip+tar framing cheaply.
-pub fn save_config(app: &AppRef, cv_id: &str, body: &Bytes) -> ApiResult<()> {
+pub async fn save_config(app: &AppRef, cv_id: &str, body: &Bytes) -> ApiResult<()> {
     if body.len() < 2 || body[0] != 0x1f || body[1] != 0x8b {
         return Err(ApiError::bad_request("configuration must be a .tar.gz archive"));
     }
     if body.len() > 100 << 20 {
         return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "configuration larger than 100 MiB"));
     }
-    let path = app.dir("blobs/config").join(format!("{cv_id}.tar.gz"));
-    std::fs::write(&path, body).map_err(anyhow::Error::from)?;
+    app.blobs.put(&format!("config/{cv_id}.tar.gz"), body.to_vec(), true).await?;
     let sha = sha256_hex(body);
     app.db.write(|c| store::mark_config_uploaded(c, cv_id, &sha, body.len() as i64))?;
     Ok(())
@@ -405,7 +425,7 @@ pub async fn upload_config(
 ) -> ApiResult<impl IntoResponse> {
     let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Planner)?;
     let cv = app.db.write(|c| store::create_config(c, &s.id, false, false))?;
-    save_config(&app, &cv.id, &body)?;
+    save_config(&app, &cv.id, &body).await?;
     let cv = app.db.read(|c| store::get_config(c, &cv.id))?;
     Ok((StatusCode::CREATED, Json(cv)))
 }
@@ -461,7 +481,7 @@ pub async fn create_run(
         }
     } else {
         let cv = app.db.write(|c| store::create_config(c, &s.id, false, kind == "proposed"))?;
-        save_config(&app, &cv.id, &body)?;
+        save_config(&app, &cv.id, &body).await?;
         cv.id
     };
     let cv = app.db.read(|c| store::get_config(c, &cv_id))?.ok_or_else(|| ApiError::not_found("configuration"))?;
@@ -691,9 +711,7 @@ pub async fn state_get(State(app): State<AppRef>, p: Principal, Path(id): Path<S
     let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Writer)?;
     match app.db.read(|c| store::current_state(c, &s.id))? {
         Some(sv) => {
-            let bytes = tokio::fs::read(app.dir("blobs/state").join(format!("{}.json", sv.sha256)))
-                .await
-                .map_err(anyhow::Error::from)?;
+            let bytes = app.blobs.get(&format!("state/{}.json", sv.sha256)).await?.ok_or_else(|| ApiError::not_found("state blob"))?;
             Ok(([(header::CONTENT_TYPE, "application/json")], bytes).into_response())
         }
         None => Ok(StatusCode::NO_CONTENT.into_response()),
@@ -733,9 +751,9 @@ pub async fn state_post(
             return Err(ApiError::conflict(format!("state serial {serial} is older than current {}", cur.serial)));
         }
     }
-    let blob = app.dir("blobs/state").join(format!("{sha}.json"));
-    if !blob.exists() {
-        tokio::fs::write(&blob, &body).await.map_err(anyhow::Error::from)?;
+    let key = format!("state/{sha}.json");
+    if !app.blobs.exists(&key).await? {
+        app.blobs.put(&key, body.to_vec(), true).await?;
     }
     let outputs = doc.get("outputs").cloned().unwrap_or_else(|| json!({}));
     app.db.write(|c| {

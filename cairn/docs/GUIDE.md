@@ -61,3 +61,33 @@ cairn token create --service --role prod=writer --expires-hours 720 --descriptio
 cairn whoami                                       # your principal and roles per space
 cairn audit --limit 20
 ```
+
+## Storage and TLS
+
+State versions, configuration tarballs and registry artifacts are blobs;
+run metadata lives in SQLite (`<data>/cairn.db`). Choose the blob store with
+`--blob-store` / `CAIRN_BLOB_STORE`:
+
+| Backend | URL | Credentials |
+|---|---|---|
+| Local disk (default) | `file:///var/lib/cairn/blobs` | — |
+| AWS S3 | `s3://bucket/prefix?region=eu-west-1` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_SESSION_TOKEN` |
+| MinIO, Garage, Ceph RGW, R2, B2 | `s3://bucket/prefix?endpoint=https://minio.lan:9000` (path-style by default with an endpoint) | same |
+| Google Cloud Storage | `s3://bucket/prefix?endpoint=https://storage.googleapis.com&region=auto` (HMAC keys from the interoperability settings) | same |
+| Azure Blob Storage | `azblob://account/container/prefix` | `AZURE_STORAGE_KEY` (base64 account key) |
+| Azurite | `azblob://devstoreaccount1/container?endpoint=http://127.0.0.1:10000/devstoreaccount1` | same |
+
+S3 requests are signed with AWS Signature Version 4 and Azure requests with
+Shared Key, both implemented in Cairn (no SDKs). Blobs are content-addressed,
+so identical state is stored once; deleting a stack deletes its blobs.
+
+**Encryption at rest.** State and configuration blobs are encrypted with
+ChaCha20-Poly1305 using the server key (`CAIRN_SECRET_KEY` or
+`<data>/secret.key`). Back up that key: without it the blobs are unreadable.
+`--no-blob-encryption` stores plaintext (for example when the bucket already
+uses KMS encryption and you want to read objects directly).
+
+**TLS.** `--tls-cert fullchain.pem --tls-key key.pem` serves HTTPS directly
+(rustls); otherwise put Cairn behind a TLS-terminating proxy. OpenTofu needs
+HTTPS for the `cloud {}` block and for registries, so one of the two is
+required for those features.

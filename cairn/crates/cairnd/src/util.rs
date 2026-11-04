@@ -51,6 +51,12 @@ pub fn now_plus_secs(secs: u64) -> String {
     fmt_ts(time::OffsetDateTime::now_utc() + time::Duration::seconds(secs as i64))
 }
 
+/// `YYYYMMDDTHHMMSSZ` for AWS SigV4.
+pub fn amz_date() -> String {
+    let t = time::OffsetDateTime::now_utc();
+    format!("{:04}{:02}{:02}T{:02}{:02}{:02}Z", t.year(), t.month() as u8, t.day(), t.hour(), t.minute(), t.second())
+}
+
 pub fn fmt_ts(t: time::OffsetDateTime) -> String {
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",

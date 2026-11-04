@@ -52,6 +52,25 @@ impl SecretBox {
         format!("{PREFIX}{}", hex::encode(out))
     }
 
+    /// Encrypt bytes: `nonce || ciphertext`.
+    pub fn seal_bytes(&self, plaintext: &[u8]) -> Vec<u8> {
+        let mut nonce = [0u8; 12];
+        random_bytes(&mut nonce);
+        let ct = self.cipher.encrypt(Nonce::from_slice(&nonce), plaintext).expect("encryption cannot fail");
+        let mut out = nonce.to_vec();
+        out.extend(ct);
+        out
+    }
+
+    pub fn open_bytes(&self, data: &[u8]) -> Result<Vec<u8>> {
+        if data.len() < 12 {
+            bail!("ciphertext too short");
+        }
+        self.cipher
+            .decrypt(Nonce::from_slice(&data[..12]), &data[12..])
+            .map_err(|_| anyhow!("cannot decrypt blob (wrong key?)"))
+    }
+
     pub fn open(&self, stored: &str) -> Result<String> {
         let Some(h) = stored.strip_prefix(PREFIX) else {
             return Ok(stored.to_string());

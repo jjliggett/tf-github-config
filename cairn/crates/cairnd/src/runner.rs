@@ -328,7 +328,7 @@ impl Exec {
                 _ => {}
             })
             .await?;
-        let stored = self.store_state()?;
+        let stored = self.store_state().await?;
         if code != 0 {
             bail!("tofu apply failed (exit {code})");
         }
@@ -363,7 +363,7 @@ impl Exec {
         self.log("info", "cairn: applying saved plan");
         let code = self.tofu(&bin, &["apply", "-input=false", "-json", PLAN_FILE], &env, |_| {}).await?;
         // Store whatever state tofu wrote, even after a failed apply (partial changes are real).
-        let stored = self.store_state()?;
+        let stored = self.store_state().await?;
         if code != 0 {
             bail!("tofu apply failed (exit {code})");
         }
@@ -384,22 +384,24 @@ impl Exec {
     /// Unpack the configuration, seed state and neutralise any configured backend.
     async fn prepare(&self) -> Result<()> {
         let cv = self.run.config_id.as_deref().ok_or_else(|| anyhow!("run has no configuration version"))?;
-        let tarball = self.app.dir("blobs/config").join(format!("{cv}.tar.gz"));
+        let tarball = self.app.blobs.get(&format!("config/{cv}.tar.gz")).await?.context("configuration not uploaded")?;
         let work = self.work.clone();
         let cwd = self.cwd.clone();
         let state = self.app.db.read(|c| store::current_state(c, &self.stack.id))?;
-        let state_blob = state.map(|s| self.app.dir("blobs/state").join(format!("{}.json", s.sha256)));
+        let state_bytes = match state {
+            Some(s) => Some(self.app.blobs.get(&format!("state/{}.json", s.sha256)).await?.context("state blob missing")?),
+            None => None,
+        };
         tokio::task::spawn_blocking(move || -> Result<()> {
             let _ = std::fs::remove_dir_all(&work);
             std::fs::create_dir_all(&work)?;
-            let f = std::fs::File::open(&tarball).context("configuration not uploaded")?;
-            let mut ar = tar::Archive::new(flate2::read::GzDecoder::new(f));
+            let mut ar = tar::Archive::new(flate2::read::GzDecoder::new(std::io::Cursor::new(tarball)));
             ar.set_preserve_permissions(false);
             ar.unpack(&work).context("unpacking configuration")?;
             std::fs::create_dir_all(&cwd)?;
             std::fs::create_dir_all(work.join(".home"))?;
-            if let Some(b) = state_blob {
-                std::fs::copy(&b, cwd.join("terraform.tfstate")).context("seeding state")?;
+            if let Some(b) = state_bytes {
+                std::fs::write(cwd.join("terraform.tfstate"), b).context("seeding state")?;
             }
             if declares_backend(&cwd)? {
                 std::fs::write(cwd.join(OVERRIDE_FILE), "terraform {\n  backend \"local\" {}\n}\n")?;
@@ -492,7 +494,7 @@ impl Exec {
                         }
                         let _ = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait()).await;
                         let _ = child.kill().await;
-                        let _ = self.store_state();
+                        let _ = self.store_state().await;
                         bail!("canceled");
                     }
                 }
@@ -503,20 +505,18 @@ impl Exec {
     }
 
     /// Store `terraform.tfstate` as a new state version if it changed.
-    fn store_state(&self) -> Result<Option<store::StateVersion>> {
+    async fn store_state(&self) -> Result<Option<store::StateVersion>> {
         let path = self.cwd.join("terraform.tfstate");
-        let Ok(bytes) = std::fs::read(&path) else { return Ok(None) };
+        let Ok(bytes) = tokio::fs::read(&path).await else { return Ok(None) };
         let sha = sha256_hex(&bytes);
         let current = self.app.db.read(|c| store::current_state(c, &self.stack.id))?;
         if current.as_ref().map(|s| s.sha256 == sha).unwrap_or(false) {
             return Ok(None);
         }
         let doc: Value = serde_json::from_slice(&bytes).context("state is not valid JSON")?;
-        let blob = self.app.dir("blobs/state").join(format!("{sha}.json"));
-        if !blob.exists() {
-            let tmp = blob.with_extension("partial");
-            std::fs::write(&tmp, &bytes)?;
-            std::fs::rename(&tmp, &blob)?;
+        let key = format!("state/{sha}.json");
+        if !self.app.blobs.exists(&key).await? {
+            self.app.blobs.put(&key, bytes.clone(), true).await?;
         }
         let outputs = doc.get("outputs").cloned().unwrap_or_else(|| json!({}));
         let resources = crate::store::count_instances(&doc);
