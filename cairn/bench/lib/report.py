@@ -6,9 +6,12 @@ import os
 BENCH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 R = os.path.join(BENCH, "results")
 TOOLS = ("otf", "terrakube", "atlantis", "cairn")
+# Run sections also show Cairn with RBAC + a plan policy (BENCH_FEATURES=1).
+RUN_TOOLS = TOOLS + ("cairn-features",)
 APP = {"otf": ["otf-otfd"], "terrakube": ["tk-api", "tk-executor", "tk-registry", "tk-ui"],
-       "atlantis": ["atlantis"], "cairn": ["cairn-cairnd"]}
-LABEL = {"otf": "OTF 0.6.3", "terrakube": "Terrakube 2.33.3", "atlantis": "Atlantis 0.49.0", "cairn": "**Cairn 0.1.0**"}
+       "atlantis": ["atlantis"], "cairn": ["cairn-cairnd"], "cairn-features": ["cairn-cairnd"]}
+LABEL = {"otf": "OTF 0.6.3", "terrakube": "Terrakube 2.33.3", "atlantis": "Atlantis 0.49.0", "cairn": "**Cairn 0.1.0**",
+         "cairn-features": "**Cairn, RBAC + plan policy**"}
 
 
 def load(name):
@@ -48,7 +51,7 @@ def fmt(v, unit="", nd=1):
 
 
 def section(suffix, title):
-    data = {t: load(t + suffix) for t in TOOLS}
+    data = {t: load(t + suffix) for t in RUN_TOOLS}
     if not any(data.values()):
         return []
     host = next(d["host"] for d in data.values() if d)
@@ -57,16 +60,16 @@ def section(suffix, title):
     lines.append(f"Host: {host['cpus']} × {host['cpu_model']}, {host['mem_mib']} MiB RAM, "
                  f"kernel {host['kernel']}, {host['arch']}, run {host['date']}."
                  + (f" **Whole stack capped at {c['cpus']:g} CPU** (shared cgroup quota)." if c else ""))
-    lines += ["", "| | " + " | ".join(LABEL[t] for t in TOOLS) + " |", "|---|" + "---|" * len(TOOLS)]
+    lines += ["", "| | " + " | ".join(LABEL[t] for t in RUN_TOOLS) + " |", "|---|" + "---|" * len(RUN_TOOLS)]
 
     def row(name, fn):
-        lines.append(f"| {name} | " + " | ".join(fn(t, data[t]) if data[t] else "-" for t in TOOLS) + " |")
+        lines.append(f"| {name} | " + " | ".join(fn(t, data[t]) if data[t] else "-" for t in RUN_TOOLS) + " |")
 
     cold_rep = load("cold-start") or {}
 
     def cold(t, d):
         rep = cold_rep.get(t)
-        if rep and not suffix:
+        if rep and not suffix and t in TOOLS:
             return (f"**{rep['docker_run_to_healthy_s']['median']} s** (process ready "
                     f"{rep['process_ready_s']['median']} s; median of {rep['trials']})")
         cs = d["cold_start"]
@@ -89,7 +92,7 @@ def section(suffix, title):
     # Back-to-back medians (trivial_api.py) where available, else the driver's single pass.
     tri = load("trivial-api" + suffix) or {}
     def triv(t, d, key):
-        if t in tri:
+        if t in tri and t in TOOLS:
             return tri[t]["rps_median" if key == "rps" else "p99_ms_median"]
         src = g(d, "api_load") if t == "atlantis" else g(d, "api_trivial")
         return g(src or {}, "c16", "rps" if key == "rps" else "p99_ms")
@@ -106,7 +109,7 @@ def section(suffix, title):
         if phase(d, t, "e2e_serial", "cpu_s") is not None else None, " s", 2))
     row("PR opened → plan comment", lambda t, d: fmt(g(d, "pr_workflow", "pr_open_to_plan_comment_s", "median"), " s", 2))
     statuses = []
-    for t in TOOLS:
+    for t in RUN_TOOLS:
         d = data[t]
         if not d:
             continue

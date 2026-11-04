@@ -16,7 +16,13 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
 import harness as h  # noqa: E402
 
-TOOL = "cairn"
+# BENCH_FEATURES=1: the same benchmark with features on. Workspaces are made
+# with the site token, then a writer-scoped service token does everything
+# else (every request goes through RBAC) and a plan policy is attached to
+# every stack (each run adds `tofu show -json` + Rego evaluation and can't use
+# the single-process apply fast path).
+FEATURES = os.environ.get("BENCH_FEATURES") == "1"
+TOOL = "cairn-features" if FEATURES else "cairn"
 VERSION = "0.1.0"
 IMAGE = f"cairn-bench/cairnd:{VERSION}"
 PORT = 8844
@@ -153,6 +159,28 @@ def run_once_longpoll(ws_id, tar):
     return {"status": b["status"], "total_s": time.monotonic() - t0}
 
 
+PLAN_POLICY = """package cairn
+import rego.v1
+deny contains sprintf("no deletes: %s", [rc.address]) if {
+  some rc in input.plan.resource_changes
+  "delete" in rc.change.actions
+}
+warn contains sprintf("%d resources change", [count(input.plan.resource_changes)]) if count(input.plan.resource_changes) > 50
+"""
+
+
+def enable_features():
+    """Attach a plan policy everywhere and switch to a writer-scoped token."""
+    global TOKEN
+    s, b = h.http("POST", f"{BASE}/api/v1/policies", TOKEN, {"name": "no-deletes", "kind": "plan", "space": ORG,
+                                                             "body": PLAN_POLICY, "labels": ["autoattach:*"]})
+    assert s == 201, (s, b)
+    s, b = h.http("POST", f"{BASE}/api/v1/tokens", TOKEN, {"kind": "service", "description": "bench writer",
+                                                          "roles": [{"space": ORG, "role": "writer"}]})
+    assert s == 201, (s, b)
+    TOKEN = b["token"]
+
+
 def main():
     build_image()
     out = {"tool": TOOL, "version": VERSION, "images": {IMAGE: h.image_size(IMAGE)}}
@@ -172,6 +200,9 @@ def main():
         t = time.monotonic()
         ws = [create_workspace(f"ws-{i:03d}") for i in range(N_WORKSPACES)]
         out["create_workspace_avg_ms"] = round((time.monotonic() - t) / N_WORKSPACES * 1000, 1)
+        if FEATURES:
+            enable_features()
+            out["features"] = ["writer-scoped service token (RBAC on every request)", "plan policy on every stack"]
 
         h.log("api load")
         t0 = time.time()

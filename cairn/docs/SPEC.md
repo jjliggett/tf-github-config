@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Draft 0.1, 2026-11-04. The M1 core is implemented as an MVP; see the [README status table](../README.md#mvp-status) and the [benchmark report](benchmark-report.md#cairn-mvp-vs-the-three) |
+| Status | Draft 0.2, 2026-11-04. Most of M1–M3 is implemented; §13.1 lists what is built, where it deviates from this spec, and what remains. See also the [README status table](../README.md#mvp-status) and the [benchmark report](benchmark-report.md#cairn-mvp-vs-the-three) |
 | Scope | Server (`cairnd`), CLI (`cairn`), MCP server, remote runner |
 | Language | Rust (server, runner, CLI). The OpenTofu provider for configuring Cairn is the one Go component (see §6.8). |
 | Name | "Cairn" is a working name: a stack of stones that marks a trail. Rename freely. |
@@ -833,6 +833,24 @@ cairn/
 | **M2: Spacelift workflow** (6 wk) | Contexts (with auto-attach), Rego policies (plan, approval, push), drift schedules, locks (R6), comment commands, the write-scoped MCP tools with elicitation, MCP over HTTP with OAuth, Postgres backend, `.cairn/config.yml` | A PR on Forgejo produces plans, policy verdicts and drift reports; Claude Code can preview and request an apply that a human confirms |
 | **M3: scale-out and credentials** (6 wk) | Remote runners and pools, workload-identity issuer plus AWS/GCP/Azure/OpenBao integrations, dependencies with output mapping, module and provider registry, notifications, audit log, OpenTofu provider v0 | A runner on mediabox applies with OpenBao-issued credentials; a change to stack A triggers B with mapped outputs |
 | **M4: polish** (ongoing) | Blueprints, TFE API phases 2 and 3, UI dependency graph, `cairn import tfc`, GitHub App and GitLab parity, HA notes | 1.0 |
+
+### 13.1 Implementation status (2026-11-04)
+
+| Area (section) | Built | Deviations from the spec | Not yet |
+|---|---|---|---|
+| Runs (§4.1, §5.1) | Proposed, tracked, destroy, task and drift runs; embedded runner; per-stack serialization; auto-apply fast path; cancel with SIGINT | Tasks run tofu subcommands only (no arbitrary shell); they end in `finished` | Remote runners and pools, hooks |
+| State (§5.3) | Versioned, deduplicated, encrypted blobs on disk, S3-compatible stores or Azure Blob; `http` backend with locks | — | Postgres metadata, rollback command |
+| VCS (§5.4) | GitHub, GitLab, Bitbucket Cloud, Azure DevOps, Gitea, Forgejo: verified webhooks, commit archives, push → tracked, PR → proposed (superseding older runs), `/cairn plan` and `/cairn apply`, commit statuses and one edited summary comment on all six, PR close/merge stops runs and frees locks | GitHub uses a token, not a GitHub App; comment commands are gated per stack (`pr_apply`) and by push policies instead of commenter→user mapping; `apply-before-merge` lock mode not built; no delivery store/redelivery, no polling fallback, no `trigger_paths` globs (project root only) | GitHub App auth, Bitbucket Data Center, `/cairn unlock` |
+| Policies (§5.5) | `login`, `push`, `plan`, `approval`, `trigger`, `task`, `notification` in-process with regorus; explicit or label auto-attachment along the space tree; evaluations stored per run; dry-run endpoint and `cairn policy eval` | `deny` is hard-mandatory and `warn` advisory; no soft-mandatory override; approval needs every attached policy to approve | `access` and `agent` kinds, `_test.rego` runner, policies synced from git |
+| Dependencies (§5.6) | DAG with cycle checks, output → `TF_VAR_` references, change-based triggering, upstream-first ordering, trigger policies, depth guard | Ordering is enforced by the scheduler rather than an explicit `--with-dependents` command | `cairn stack deps graph`, deploying a subgraph on demand |
+| Drift and schedules (§5.7) | Cron (5-field, UTC) and one-shot schedules for drift (with reconcile), tracked runs, tasks and destroy; drift status on the stack; event-driven timer | No jitter; UTC only | Space-level drift report, `list_drift` |
+| TFE API (§6.1) | Phase 1 subset | — | `tofu login`, state-version upload, teams |
+| CLI (§6.3) | Login (token or OIDC browser flow), spaces, roles, tokens, audit, stacks, runs (review, policies), policies, webhooks, VCS, registry, dependencies, schedules, tasks, drift, destroy | — | Repo-aware stack inference |
+| MCP (§6.5) | 23 tools over stdio with annotations; elicitation gate on applies, approvals and state-changing tasks; `--read-only` | — | MCP over HTTP with OAuth, resources |
+| Registry (§6.7) | `modules.v1` and `providers.v1` with RBAC namespaces, uploads, GPG-signed releases verified by OpenTofu, pre-signed downloads, run-scoped tokens | Modules are published by upload only | Publishing from git tags, provider network mirror |
+| Security (§7) | OIDC (bearer ID tokens and PKCE login), space-tree RBAC, user/service tokens with expiry, audit log, secrets and blobs encrypted, TLS, SSRF guard on webhooks | — | Workload identity / OpenBao credentials (§7.4) |
+| Configuration as code (§6.8) | — | — | `.cairn/config.yml`, the OpenTofu provider, bootstrap file |
+| UI (§6.6) | — | Deferred: CLI, API and MCP only | Minimal UI |
 
 ## 14. Migration from Terraform Cloud
 
