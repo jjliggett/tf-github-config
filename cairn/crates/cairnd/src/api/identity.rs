@@ -20,11 +20,15 @@ fn reload(app: &AppRef) -> ApiResult<()> {
 }
 
 pub async fn whoami(State(app): State<AppRef>, p: Principal) -> ApiResult<Json<Value>> {
-    let spaces = app.db.read(store::list_spaces)?;
-    let roles: Vec<Value> = spaces
+    // From the in-memory authz snapshot: no database round trip per call.
+    let snap = app.authz.snapshot();
+    let mut roles: Vec<(&String, &String, crate::auth::Role)> = snap
+        .spaces
         .iter()
-        .filter_map(|s| app.authz.role(&p, &s.id).map(|r| json!({"space": s.name, "space_id": s.id, "role": r})))
+        .filter_map(|(id, (name, _))| app.authz.role_in_snapshot(&snap, &p, id).map(|r| (name, id, r)))
         .collect();
+    roles.sort_by(|a, b| a.0.cmp(b.0));
+    let roles: Vec<Value> = roles.into_iter().map(|(name, id, r)| json!({"space": name, "space_id": id, "role": r})).collect();
     Ok(Json(json!({"principal": p, "roles": roles})))
 }
 

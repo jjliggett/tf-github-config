@@ -243,7 +243,7 @@ beat, not Terrakube's.
 
 ## Cairn MVP vs the three
 
-Cairn 0.1.0 (`crates/cairnd`) was measured with the same harness
+Cairn (`crates/cairnd`) is measured with the same harness
 (`bench/cairn/run.py`). For runs and lists it makes **the same TFE API calls
 with the same 0.1 s status polling** as the OTF driver. Its container is a
 glibc build on `scratch`, about 5 MiB compressed, with the data directory on a
@@ -251,36 +251,61 @@ bind mount and OpenTofu 1.11.6 pre-seeded like the others. Cold starts and the
 trivial read are medians of repeated back-to-back trials (`cold_start.py`,
 `trivial_api.py`).
 
-| All host CPUs | OTF | Terrakube | Atlantis | **Cairn** |
-|---|---|---|---|---|
-| Containers / compressed amd64 image | 2 / 35 MiB | 7 / 999 MiB | 1 / 60 MiB | **1 / 5 MiB** |
-| Cold start → healthy (median of 10) | 0.42 s | 25.6 s (1 sample) | 0.35 s | **0.17 s** |
-| … of which the app's own startup | 0.18 s | — | 0.05 s | **0.005 s** |
-| Idle RSS, whole stack | 36 MiB | 2,405 MiB | 10 MiB | **1.6 MiB** |
-| Idle CPU over 56 s | 10 ms (otfd) + Postgres | 1 s | 20 ms | **0 ms** |
-| Smallest memory limit it starts in | 16 MiB | 3,328 MiB | 16 MiB | **6 MiB** (Docker's minimum) |
-| List 50 workspaces: 1 client p50 | 152 ms | 99 ms | n/a | **0.5 ms** |
-| List 50 workspaces: 16 clients | 18 req/s | 31 req/s | n/a | **8,640 req/s** (p99 4.6 ms) |
-| Trivial authenticated read, 16 clients | — | — | 33,012 req/s (p99 3.1 ms) | **50,596 req/s** (p99 2.1 ms) |
-| Create → applied, median of 5 | 0.44 s | 26.95 s | 0.57 s | **0.20 s** (0.19 s with long-poll) |
-| No-op run | 0.24 s | 10.63 s | n/a | **0.21 s** |
-| 5 runs at once | 1.01 s | 146.5 s | 1.09 s | **0.74 s** |
-| Peak RSS, 5 runs at once (incl. tofu) | 154 MiB | 2,559 MiB | 103 MiB | **81 MiB** |
-| CPU per run, whole stack | 0.66 s | 7.96 s | 0.60 s | **0.34 s** |
+These numbers are from the build with policies, VCS, the registry, schedules
+and dependencies. OTF was re-measured the same day. Terrakube and Atlantis
+runs are from the first session (Atlantis's trivial read was re-measured).
+The host was slower than in that first session: the MVP binary rebuilt and
+re-measured today takes 0.21 s per run, not 0.16 s, the same as the current
+build (0.21 s). So the change in Cairn's numbers since the MVP is the host,
+not the code. With 0.1 s polling, a 0.21 s run shows up as 0.31 s.
 
-| 1-CPU budget | OTF | Terrakube | Atlantis | **Cairn** |
-|---|---|---|---|---|
-| Cold start → healthy | 0.64 s | 94.4 s | 0.26 s | **0.19 s** |
-| List 50 workspaces: 16 clients | 5 req/s | 6 req/s | n/a | **4,468 req/s** |
-| Trivial authenticated read, 16 clients | — | — | 28,255 req/s (p99 2.6 ms) | **44,175 req/s** (p99 2.1 ms) |
-| Create → applied | 0.78 s | 28.9 s | 0.72 s | **0.51 s** |
-| No-op run | 0.50 s | 11.1 s | n/a | **0.36 s** |
-| 5 runs at once | 4.1 s | 147.5 s | 3.29 s | **2.41 s** |
-| Peak RSS, 5 runs at once | 186 MiB | 1,714 MiB | 106 MiB | **81 MiB** |
+The last column turns features on: a writer-scoped service token instead
+of the site token (RBAC on every request) and a plan policy attached to every
+stack (`BENCH_FEATURES=1`). A policy-checked run can't use the single-process
+fast path: it is `plan -out`, `show -json`, Rego, then `apply` of the saved
+plan, three OpenTofu processes instead of one.
 
-**Not compared yet:** the PR workflow (Atlantis: plan comment 1.6 s after the
-PR opens), because Cairn has no VCS integration yet, and arm64 images (Cairn
-isn't cross-built yet).
+| All host CPUs | OTF | Terrakube | Atlantis | **Cairn** | Cairn, RBAC + plan policy |
+|---|---|---|---|---|---|
+| Containers / compressed amd64 image | 2 / 35 MiB | 7 / 999 MiB | 1 / 60 MiB | **1 / 5 MiB** | same |
+| Cold start → healthy (median of 10) | 0.42 s | 25.6 s (1 sample) | 0.35 s | **0.18 s** | 0.20 s (1 sample) |
+| … of which the app's own startup | 0.18 s | — | 0.05 s | **0.01 s** | — |
+| Idle RSS, whole stack | 31 MiB | 2,405 MiB | 10 MiB | **3 MiB** | 3 MiB |
+| Idle CPU | 0.33 % of a core | 1.67 % | 0 % | **0 %** | 0 % |
+| Smallest memory limit it starts in | 16 MiB | 3,328 MiB | 16 MiB | **6 MiB** (Docker's minimum) | — |
+| List 50 workspaces: 1 client p50 | 205 ms | 99 ms | n/a | **0.5 ms** | 0.6 ms |
+| List 50 workspaces: 16 clients | 14 req/s | 31 req/s | n/a | **7,384 req/s** (p99 4.7 ms) | 7,739 req/s (p99 4.4 ms) |
+| Trivial authenticated read, 16 clients | — | — | 37,804 req/s (p99 2.4 ms) | **45,080 req/s** (p99 2.0 ms) | 44,504 req/s (p99 2.1 ms) |
+| Create → applied, median of 5 | 0.46 s | 26.95 s | 0.57 s | **0.31 s** (0.21 s with long-poll) | 0.41 s (0.34 s with long-poll) |
+| No-op run | 0.37 s | 10.63 s | n/a | **0.21 s** | 0.31 s |
+| 5 runs at once | 1.30 s | 146.5 s | 1.09 s | **0.85 s** | 1.16 s |
+| Peak RSS, 5 runs at once (incl. tofu) | 178 MiB | 2,559 MiB | 103 MiB | **93 MiB** | 82 MiB |
+| CPU per run, whole stack | 0.76 s | 7.96 s | 0.60 s | **0.50 s** | 0.62 s |
+
+| 1-CPU budget | OTF | Terrakube | Atlantis | **Cairn** | Cairn, RBAC + plan policy |
+|---|---|---|---|---|---|
+| Cold start → healthy | 0.97 s | 94.4 s | 0.26 s | **0.20 s** | 0.21 s |
+| List 50 workspaces: 16 clients | 4 req/s | 6 req/s | n/a | **4,321 req/s** | 3,997 req/s |
+| Trivial authenticated read, 16 clients | — | — | 22,190 req/s (p99 2.9 ms) | **46,706 req/s** (p99 2.1 ms) | 47,728 req/s (p99 1.9 ms) |
+| Create → applied | 0.89 s | 28.9 s | 0.72 s | **0.58 s** | 0.72 s |
+| No-op run | 0.54 s | 11.1 s | n/a | **0.42 s** | 0.48 s |
+| 5 runs at once | 5.15 s | 147.5 s | 3.29 s | **2.48 s** | 3.70 s |
+| Peak RSS, 5 runs at once | 176 MiB | 1,714 MiB | 106 MiB | **98 MiB** | 87 MiB |
+
+Plain Cairn is ahead of all three in every row. With features on, it stays
+ahead everywhere except two run rows at 1 CPU: create → applied ties Atlantis
+(0.72 s) and 5 parallel runs take 3.70 s against Atlantis's 3.29 s. That is the
+two extra OpenTofu processes per policy-checked run competing for one CPU;
+Atlantis was measured without any policy step (with conftest it would also
+run `show -json` plus a conftest process). Folding the policy check into fewer
+processes is a follow-up (see below).
+
+OTF's first run on the re-measure took 6.7 s against 0.48 s before; it is a
+one-off warm-up (the medians are unaffected) and was not investigated.
+
+**Not compared yet:** the PR workflow. Cairn now has one (§VCS in the
+guide), but the harness only drives Atlantis's; arm64 images (Cairn isn't
+cross-built yet).
 
 ### What made the difference
 
@@ -296,13 +321,18 @@ history of `bench/results`.
 | glibc instead of musl for the image | musl's `memcpy` halved list throughput (5.4k vs 9.9k req/s) |
 | One `tofu apply -auto-approve` instead of `plan -out` + `apply` for auto-apply runs | Saves a process start and a plan-file round trip: 0.20 → 0.16 s per run with long-poll |
 | `GOGC=50` for OpenTofu processes (configurable, `0` turns it off) | tofu's anonymous memory drops 26.6 → 18.7 MiB per process, for ~30 ms more per apply; peak with 5 parallel runs 104 → 81 MiB |
+| `whoami` answered from the in-memory authz snapshot instead of a SQLite query per call | Trivial read with a scoped token 35k → 45k req/s (24k → 48k at 1 CPU), the same as the site token |
 | Single-layer image, data dir created with the right owner | Faster `docker run`; the benchmark harness also stopped copying 113 MB right before each start, which had inflated the first cold-start numbers |
 
 ### Caveats specific to Cairn
 
-- It implements less than the others today (no VCS, policies, UI or SSO); see
-  the [README status table](../README.md#mvp-status). Those features have to
-  arrive without breaking the budgets, which the harness will check.
+- It now has VCS, policies, SSO, a registry, schedules and dependencies, but
+  no UI yet; see the [README status table](../README.md#mvp-status). The
+  harness measures it with and without RBAC and policies.
+- Policy-checked runs cost two extra OpenTofu processes. At 1 CPU that is
+  enough to tie Atlantis on serial runs and lose on 5 parallel ones (see
+  above); evaluating plan policies from the `plan -json` stream, or keeping
+  the plan in one process, would remove most of it.
 - Its state lives in SQLite on the same host. OTF's numbers include a Postgres
   round trip per query, which is part of OTF's design, not an artifact.
 - `GOGC=50` trades about 20 % more OpenTofu CPU for 30 % less memory. Even so,

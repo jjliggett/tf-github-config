@@ -92,7 +92,7 @@ def section(suffix, title):
     # Back-to-back medians (trivial_api.py) where available, else the driver's single pass.
     tri = load("trivial-api" + suffix) or {}
     def triv(t, d, key):
-        if t in tri and t in TOOLS:
+        if t in tri:
             return tri[t]["rps_median" if key == "rps" else "p99_ms_median"]
         src = g(d, "api_load") if t == "atlantis" else g(d, "api_trivial")
         return g(src or {}, "c16", "rps" if key == "rps" else "p99_ms")

@@ -43,7 +43,7 @@ the best measured value in each row.
 
 ### Goals
 
-1. **Fit on a Pi 4 (4 GB) that is already busy.** One process, ≤ 8 MiB idle RSS (the MVP idles at 1.6 MiB)
+1. **Fit on a Pi 4 (4 GB) that is already busy.** One process, ≤ 8 MiB idle RSS (Cairn idles at 1.6–3 MiB)
    for `cairnd`, no JVM, no Redis, and no separate IdP proxy. SQLite by default,
    and your existing Postgres when you want it.
 2. **Be a drop-in TFC/TFE target for the OpenTofu CLI.** `tofu login`, the
@@ -684,24 +684,24 @@ These budgets are acceptance criteria. The benchmark harness in `../bench/`
 gains a `cairn/run.py` driver and runs in CI on every release. A budget
 regression of more than 10 % fails the release.
 
-| Metric | OTF | Terrakube | Atlantis | **Cairn budget** | Cairn 0.1.0 (measured) |
+| Metric | OTF | Terrakube | Atlantis | **Cairn budget** | Cairn (measured 2026-11-04, policies/VCS/registry build) |
 |---|---|---|---|---|---|
 | Processes or containers to run | 2 | 7 | 1 | **1** (+ optional Postgres) | 1 ✔ |
 | Compressed image, app only | 35 MiB amd64 / 33 MiB arm64 | 999 / 1,362 MiB | 60 / 56 MiB | **≤ 20 MiB** (≤ 75 MiB with tofu bundled) | 5 MiB amd64 ✔ (arm64 not built yet) |
-| Cold start → healthy via `docker run` (median of 10) | 0.42 s | 25.6 s | 0.35 s | **below the best measured (0.35 s)** | 0.17 s ✔ |
-| The app's own startup (container started → healthy) | 0.18 s | — | 0.05 s | **≤ 0.02 s** | 0.005 s ✔ |
-| Cold start, 1-CPU budget | 0.64 s | 94.4 s | 0.26 s | **≤ 0.2 s** | 0.19 s ✔ |
-| Idle RSS, whole stack | 36 MiB | 2,405 MiB | 10 MiB | **≤ 8 MiB** (SQLite) | 1.6 MiB ✔ |
+| Cold start → healthy via `docker run` (median of 10) | 0.42 s | 25.6 s | 0.35 s | **below the best measured (0.35 s)** | 0.18 s ✔ |
+| The app's own startup (container started → healthy) | 0.18 s | — | 0.05 s | **≤ 0.02 s** | 0.01 s ✔ |
+| Cold start, 1-CPU budget | 0.64 s | 94.4 s | 0.26 s | **≤ 0.2 s** | 0.20 s ✔ |
+| Idle RSS, whole stack | 36 MiB | 2,405 MiB | 10 MiB | **≤ 8 MiB** (SQLite) | 3 MiB ✔ |
 | Smallest hard memory limit it starts in | 16 MiB | 3,328 MiB (3 JVMs) | 16 MiB | **≤ 12 MiB** | 6 MiB (Docker's minimum) ✔ |
-| Idle CPU, whole stack | 0.33 % | 1.7 % | 0.04 % | **≤ 0.02 % of a core** (no timer faster than 30 s) | 0 ms in 56 s ✔ |
+| Idle CPU, whole stack | 0.33 % | 1.7 % | 0.04 % | **≤ 0.02 % of a core** (no timer faster than 30 s) | 0 % ✔ (the schedule timer sleeps until the next due schedule) |
 | List 50 stacks, 1 client p50 | 152 ms | 99 ms | n/a | **≤ 2 ms** | 0.5 ms ✔ |
-| List 50 stacks, 16 clients | 18 req/s, p99 1.0 s | 31 req/s, p99 0.8 s | n/a | **≥ 5,000 req/s, p99 ≤ 20 ms** | 8,640 req/s, p99 4.6 ms ✔ |
-| Run → applied (100 resources; tofu init+plan+apply ≈ 0.17 s) | 0.44 s | 27.0 s | 0.57 s | **≤ tofu + 0.1 s** (≈ 0.27 s) | 0.20 s polled, 0.19 s long-poll ✔ |
-| Same, 1-CPU budget | 0.78 s | 28.9 s | 0.72 s | **≤ tofu + 0.5 s** | 0.51 s ✔ |
-| No-op run (tofu init+plan ≈ 0.10 s) | 0.24 s | 10.6 s | n/a | **≤ tofu + 0.1 s** (≈ 0.20 s) | 0.14 s long-poll ✔ (0.21 s with 0.1 s polling) |
-| 5 runs at once, wall time | 1.01 s | 146.5 s | 1.09 s | **below the best measured (1.01 s)**. The runs are CPU-bound, so the floor is 5 × CPU per run ÷ cores | 0.74 s ✔ |
-| Peak RSS, 5 runs at once (stack, incl. tofu) | 154 MiB | 2,559 MiB | 103 MiB | **≤ 90 MiB** | 81 MiB ✔ |
-| PR opened → plan feedback on the PR | n/a | n/a | 1.6 s | **≤ tofu + 0.5 s** (Gitea round trips included) | not built yet (M2) |
+| List 50 stacks, 16 clients | 18 req/s, p99 1.0 s | 31 req/s, p99 0.8 s | n/a | **≥ 5,000 req/s, p99 ≤ 20 ms** | 7,384 req/s, p99 4.7 ms ✔ (7,739 with a scoped token) |
+| Run → applied (100 resources; tofu init+plan+apply ≈ 0.17 s) | 0.44 s | 27.0 s | 0.57 s | **≤ tofu + 0.1 s** (≈ 0.27 s) | 0.21 s long-poll ✔ (0.31 s with 0.1 s polling; the host ran ~30 % slower than in the first session, and the MVP binary re-measured gives the same) |
+| Same, 1-CPU budget | 0.78 s | 28.9 s | 0.72 s | **≤ tofu + 0.5 s** | 0.58 s ✔ |
+| No-op run (tofu init+plan ≈ 0.10 s) | 0.24 s | 10.6 s | n/a | **≤ tofu + 0.1 s** (≈ 0.20 s) | 0.21 s with 0.1 s polling ✔ |
+| 5 runs at once, wall time | 1.01 s | 146.5 s | 1.09 s | **below the best measured (1.01 s)**. The runs are CPU-bound, so the floor is 5 × CPU per run ÷ cores | 0.85 s ✔ (1.30 s for OTF on the same day) |
+| Peak RSS, 5 runs at once (stack, incl. tofu) | 154 MiB | 2,559 MiB | 103 MiB | **≤ 90 MiB** | 93 MiB ✘ (81 MiB in the first session; 82 MiB with a plan policy, whose runs overlap less) |
+| PR opened → plan feedback on the PR | n/a | n/a | 1.6 s | **≤ tofu + 0.5 s** (Gitea round trips included) | built; not in the harness yet |
 
 Engineering rules that keep these budgets:
 
@@ -709,7 +709,7 @@ Engineering rules that keep these budgets:
   on `spawn_blocking` with bounded pools.
 - Logs are streamed, never fully buffered. Plan JSON is parsed incrementally
   (`serde_json::StreamDeserializer`) to compute summaries.
-- `mimalloc` as the global allocator. Release builds use `lto = "fat"`,
+- The system allocator (mimalloc cost ~10 MiB of idle RSS for ~25 % more peak throughput; see the benchmark report). Release builds use `lto = "fat"`,
   `codegen-units = 1`, `panic = "abort"` for the server and `strip = true`.
 - No timer wakes up more often than every 30 s at idle.
 - Everything that can grow (connection pools, caches, channels) has a limit,

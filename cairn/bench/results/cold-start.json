@@ -37,16 +37,16 @@
     "trials": 10,
     "docker_run_to_healthy_s": {
       "n": 10,
-      "min": 0.15,
-      "median": 0.17,
-      "max": 0.19,
-      "mean": 0.17
+      "min": 0.17,
+      "median": 0.18,
+      "max": 0.2,
+      "mean": 0.18
     },
     "process_ready_s": {
       "n": 10,
-      "min": 0.0,
+      "min": 0.01,
       "median": 0.01,
-      "max": 0.01,
+      "max": 0.02,
       "mean": 0.01
     }
   },
@@ -57,6 +57,6 @@
     "mem_mib": 16091,
     "kernel": "6.18.44-fc-v233",
     "arch": "x86_64",
-    "date": "2026-11-04T10:57:25Z"
+    "date": "2026-11-04T13:08:54Z"
   }
 }

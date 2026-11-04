@@ -167,6 +167,14 @@ impl Authz {
         self.snap.read().unwrap().clone()
     }
 
+    /// [`Authz::role`] against a snapshot the caller already holds (no lock per call).
+    pub fn role_in_snapshot(&self, s: &Snapshot, p: &Principal, space_id: &str) -> Option<Role> {
+        if p.site_admin {
+            return Some(Role::Admin);
+        }
+        role_in(s, p, space_id)
+    }
+
     /// The role `p` has on `space_id` (inherited from ancestors), if any.
     pub fn role(&self, p: &Principal, space_id: &str) -> Option<Role> {
         if p.site_admin {

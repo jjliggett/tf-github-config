@@ -18,55 +18,55 @@ Baseline, plain `tofu` 1.11.6 on the host with the same fixture (100 `terraform_
 
 ## Unconstrained (all host CPUs)
 
-Host: 4 × Intel(R) Xeon(R) Processor @ 2.10GHz, 16091 MiB RAM, kernel 6.18.44-fc-v233, x86_64, run 2026-11-04T05:28:31Z.
+Host: 4 × Intel(R) Xeon(R) Processor @ 2.10GHz, 16091 MiB RAM, kernel 6.18.44-fc-v233, x86_64, run 2026-11-04T13:03:53Z.
 
-| | OTF 0.6.3 | Terrakube 2.33.3 | Atlantis 0.49.0 | **Cairn 0.1.0** |
-|---|---|---|---|---|
-| Cold start → healthy | **0.42 s** (process ready 0.18 s; median of 10) | **25.57 s** (ui 1.0, registry 10.4, executor 12.22, api 25.57) | **0.35 s** (process ready 0.05 s; median of 10) | **0.17 s** (process ready 0.01 s; median of 10) |
-| Idle RSS, app containers | 13 MiB | 2,382 MiB | 10 MiB | 2 MiB |
-| Idle RSS, whole stack | 36 MiB | 2,405 MiB | 10 MiB | 2 MiB |
-| Idle CPU, whole stack | 0.33 % of a core | 1.67 % of a core | 0.0 % of a core | 0.0 % of a core |
-| List 50 workspaces, 1 client: p50 / p95 | 152.3 / 191.8 ms | 98.5 / 136.5 ms | n/a (no inventory API) | 0.5 / 0.7 ms |
-| List 50 workspaces, 16 clients: req/s | 18 | 31 | n/a (no inventory API) | 8,640 |
-| List 50 workspaces, 16 clients: p99 | 1011.5 ms | 824.9 ms | n/a (no inventory API) | 4.6 ms |
-| Peak RSS during list load (stack) | 65 MiB | 2,466 MiB | n/a (no inventory API) | 4 MiB |
-| Trivial authenticated read, 16 clients: req/s | - | - | 33,012 | 50,596 |
-| Trivial authenticated read, 16 clients: p99 | - | - | 3.1 ms | 2.1 ms |
-| First run (cold engine/cache) | 0.48 s | 34.46 s | 0.66 s | 0.31 s |
-| Run → planned, median | 0.22 s | 10.75 s | 0.33 s | 0.2 s |
-| Run → applied, median | 0.44 s | 26.95 s | 0.57 s | 0.2 s |
-| No-op run, median | 0.24 s | 10.63 s | - | 0.21 s |
-| 5 runs at once: wall time | 1.01 s | 146.5 s | 1.09 s | 0.74 s |
-| Peak RSS, 5 runs at once (stack) | 154 MiB | 2,559 MiB | 103 MiB | 81 MiB |
-| CPU time per serial run (stack) | 0.66 s | 7.96 s | 0.6 s | 0.34 s |
-| PR opened → plan comment | - | - | 1.62 s | - |
+| | OTF 0.6.3 | Terrakube 2.33.3 | Atlantis 0.49.0 | **Cairn 0.1.0** | **Cairn, RBAC + plan policy** |
+|---|---|---|---|---|---|
+| Cold start → healthy | **0.42 s** (process ready 0.18 s; median of 10) | **25.57 s** (ui 1.0, registry 10.4, executor 12.22, api 25.57) | **0.35 s** (process ready 0.05 s; median of 10) | **0.18 s** (process ready 0.01 s; median of 10) | **0.2 s** |
+| Idle RSS, app containers | 13 MiB | 2,382 MiB | 10 MiB | 3 MiB | 3 MiB |
+| Idle RSS, whole stack | 31 MiB | 2,405 MiB | 10 MiB | 3 MiB | 3 MiB |
+| Idle CPU, whole stack | 0.33 % of a core | 1.67 % of a core | 0.0 % of a core | 0.0 % of a core | 0.0 % of a core |
+| List 50 workspaces, 1 client: p50 / p95 | 205.2 / 257.9 ms | 98.5 / 136.5 ms | n/a (no inventory API) | 0.5 / 0.8 ms | 0.6 / 0.8 ms |
+| List 50 workspaces, 16 clients: req/s | 14 | 31 | n/a (no inventory API) | 7,384 | 7,739 |
+| List 50 workspaces, 16 clients: p99 | 1310.1 ms | 824.9 ms | n/a (no inventory API) | 4.7 ms | 4.4 ms |
+| Peak RSS during list load (stack) | 64 MiB | 2,466 MiB | n/a (no inventory API) | 6 MiB | 6 MiB |
+| Trivial authenticated read, 16 clients: req/s | - | - | 37,804 | 45,080 | 44,504 |
+| Trivial authenticated read, 16 clients: p99 | - | - | 2.4 ms | 2.0 ms | 2.1 ms |
+| First run (cold engine/cache) | 6.7 s | 34.46 s | 0.66 s | 0.31 s | 0.42 s |
+| Run → planned, median | 0.34 s | 10.75 s | 0.33 s | 0.21 s | 0.31 s |
+| Run → applied, median | 0.46 s | 26.95 s | 0.57 s | 0.31 s | 0.41 s |
+| No-op run, median | 0.37 s | 10.63 s | - | 0.21 s | 0.31 s |
+| 5 runs at once: wall time | 1.3 s | 146.5 s | 1.09 s | 0.85 s | 1.16 s |
+| Peak RSS, 5 runs at once (stack) | 178 MiB | 2,559 MiB | 103 MiB | 93 MiB | 82 MiB |
+| CPU time per serial run (stack) | 0.76 s | 7.96 s | 0.6 s | 0.5 s | 0.62 s |
+| PR opened → plan comment | - | - | 1.62 s | - | - |
 
 All measured runs succeeded.
 
 ## 1-CPU budget (rough stand-in for a small ARM board)
 
-Host: 4 × Intel(R) Xeon(R) Processor @ 2.10GHz, 16091 MiB RAM, kernel 6.18.44-fc-v233, x86_64, run 2026-11-04T05:07:06Z. **Whole stack capped at 1 CPU** (shared cgroup quota).
+Host: 4 × Intel(R) Xeon(R) Processor @ 2.10GHz, 16091 MiB RAM, kernel 6.18.44-fc-v233, x86_64, run 2026-11-04T13:08:51Z. **Whole stack capped at 1 CPU** (shared cgroup quota).
 
-| | OTF 0.6.3 | Terrakube 2.33.3 | Atlantis 0.49.0 | **Cairn 0.1.0** |
-|---|---|---|---|---|
-| Cold start → healthy | **0.64 s** | **94.39 s** (ui 1.18, registry 41.49, executor 46.79, api 94.39) | **0.26 s** | **0.19 s** |
-| Idle RSS, app containers | 13 MiB | 3,658 MiB | 10 MiB | 2 MiB |
-| Idle RSS, whole stack | 32 MiB | 3,682 MiB | 10 MiB | 2 MiB |
-| Idle CPU, whole stack | 0.33 % of a core | 1.33 % of a core | 0.0 % of a core | 0.0 % of a core |
-| List 50 workspaces, 1 client: p50 / p95 | 197.4 / 244.6 ms | 310.9 / 683.2 ms | n/a (no inventory API) | 0.4 / 0.6 ms |
-| List 50 workspaces, 16 clients: req/s | 5 | 6 | n/a (no inventory API) | 4,468 |
-| List 50 workspaces, 16 clients: p99 | 3808.0 ms | 8008.7 ms | n/a (no inventory API) | 62.2 ms |
-| Peak RSS during list load (stack) | 64 MiB | 8,027 MiB | n/a (no inventory API) | 4 MiB |
-| Trivial authenticated read, 16 clients: req/s | - | - | 28,255 | 44,175 |
-| Trivial authenticated read, 16 clients: p99 | - | - | 2.6 ms | 2.1 ms |
-| First run (cold engine/cache) | 0.8 s | 42.38 s | 0.77 s | 0.56 s |
-| Run → planned, median | 0.38 s | 11.7 s | 0.47 s | 0.31 s |
-| Run → applied, median | 0.78 s | 28.91 s | 0.72 s | 0.51 s |
-| No-op run, median | 0.5 s | 11.06 s | - | 0.36 s |
-| 5 runs at once: wall time | 4.1 s | 147.49 s | 3.29 s | 2.41 s |
-| Peak RSS, 5 runs at once (stack) | 186 MiB | 1,714 MiB | 106 MiB | 81 MiB |
-| CPU time per serial run (stack) | 0.72 s | 8.72 s | 0.62 s | 0.42 s |
-| PR opened → plan comment | - | - | 1.84 s | - |
+| | OTF 0.6.3 | Terrakube 2.33.3 | Atlantis 0.49.0 | **Cairn 0.1.0** | **Cairn, RBAC + plan policy** |
+|---|---|---|---|---|---|
+| Cold start → healthy | **0.97 s** | **94.39 s** (ui 1.18, registry 41.49, executor 46.79, api 94.39) | **0.26 s** | **0.2 s** | **0.21 s** |
+| Idle RSS, app containers | 13 MiB | 3,658 MiB | 10 MiB | 3 MiB | 3 MiB |
+| Idle RSS, whole stack | 30 MiB | 3,682 MiB | 10 MiB | 3 MiB | 3 MiB |
+| Idle CPU, whole stack | 0.33 % of a core | 1.33 % of a core | 0.0 % of a core | 0.0 % of a core | 0.0 % of a core |
+| List 50 workspaces, 1 client: p50 / p95 | 258.1 / 291.5 ms | 310.9 / 683.2 ms | n/a (no inventory API) | 0.4 / 0.8 ms | 0.6 / 0.9 ms |
+| List 50 workspaces, 16 clients: req/s | 4 | 6 | n/a (no inventory API) | 4,321 | 3,997 |
+| List 50 workspaces, 16 clients: p99 | 4583.5 ms | 8008.7 ms | n/a (no inventory API) | 65.4 ms | 60.9 ms |
+| Peak RSS during list load (stack) | 64 MiB | 8,027 MiB | n/a (no inventory API) | 6 MiB | 4 MiB |
+| Trivial authenticated read, 16 clients: req/s | - | - | 22,190 | 46,706 | 47,728 |
+| Trivial authenticated read, 16 clients: p99 | - | - | 2.9 ms | 2.1 ms | 1.9 ms |
+| First run (cold engine/cache) | 1.11 s | 42.38 s | 0.77 s | 0.64 s | 0.72 s |
+| Run → planned, median | 0.49 s | 11.7 s | 0.47 s | 0.31 s | 0.47 s |
+| Run → applied, median | 0.89 s | 28.91 s | 0.72 s | 0.58 s | 0.72 s |
+| No-op run, median | 0.54 s | 11.06 s | - | 0.42 s | 0.48 s |
+| 5 runs at once: wall time | 5.15 s | 147.49 s | 3.29 s | 2.48 s | 3.7 s |
+| Peak RSS, 5 runs at once (stack) | 176 MiB | 1,714 MiB | 106 MiB | 98 MiB | 87 MiB |
+| CPU time per serial run (stack) | 0.88 s | 8.72 s | 0.62 s | 0.54 s | 0.7 s |
+| PR opened → plan comment | - | - | 1.84 s | - | - |
 
 All measured runs succeeded.
 
@@ -79,7 +79,7 @@ All measured runs succeeded.
 | Terrakube 2.33.3 | executor | 1024 MiB | 266.3 MiB | 5.14 s |
 | Terrakube 2.33.3 | registry | 768 MiB | 221.0 MiB | 4.25 s |
 | Atlantis 0.49.0 | atlantis | 16 MiB | 9.3 MiB | 0.25 s |
-| **Cairn 0.1.0** | cairnd | 6 MiB | 1.6 MiB | 0.15 s |
+| **Cairn 0.1.0** | cairnd | 6 MiB | 3.3 MiB | 0.28 s |
 
 ## OTF: Postgres transactions per request
 
