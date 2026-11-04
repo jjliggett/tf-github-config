@@ -2,13 +2,13 @@
   "tool": "cairn",
   "version": "0.1.0",
   "images": {
-    "cairn-bench/cairnd:0.1.0": 15762886
+    "cairn-bench/cairnd:0.1.0": 25070312
   },
   "cold_start": {
-    "healthz_s": 0.2,
-    "poll_s": 0.003
+    "healthz_s": 0.25,
+    "poll_s": 0.014
   },
-  "create_workspace_avg_ms": 1.0,
+  "create_workspace_avg_ms": 1.2,
   "api_load": {
     "c1": {
       "requests": 320,
@@ -16,12 +16,12 @@
       "status": {
         "200": 320
       },
-      "max_ms": 2.4,
+      "max_ms": 6.0,
       "avg_ms": 0.5,
-      "rps": 2029.4,
+      "rps": 1837.1,
       "p50_ms": 0.5,
-      "p95_ms": 0.7,
-      "p99_ms": 1.1
+      "p95_ms": 0.8,
+      "p99_ms": 1.9
     },
     "c16": {
       "requests": 3200,
@@ -29,12 +29,12 @@
       "status": {
         "200": 3200
       },
-      "max_ms": 7.7,
-      "avg_ms": 1.8,
-      "rps": 8639.7,
-      "p50_ms": 1.8,
-      "p95_ms": 3.2,
-      "p99_ms": 4.6
+      "max_ms": 12.0,
+      "avg_ms": 2.1,
+      "rps": 7384.4,
+      "p50_ms": 2.1,
+      "p95_ms": 3.7,
+      "p99_ms": 4.7
     },
     "endpoint": "GET /api/v2/organizations/:org/workspaces (all 50 in one page)"
   },
@@ -45,12 +45,12 @@
       "status": {
         "200": 320
       },
-      "max_ms": 1.9,
+      "max_ms": 1.2,
       "avg_ms": 0.1,
-      "rps": 10607.9,
+      "rps": 7913.2,
       "p50_ms": 0.1,
-      "p95_ms": 0.1,
-      "p99_ms": 0.2
+      "p95_ms": 0.2,
+      "p99_ms": 0.3
     },
     "c16": {
       "requests": 3200,
@@ -58,43 +58,43 @@
       "status": {
         "200": 3200
       },
-      "max_ms": 3.9,
-      "avg_ms": 0.3,
-      "rps": 57164.3,
-      "p50_ms": 0.2,
-      "p95_ms": 0.8,
-      "p99_ms": 1.7
+      "max_ms": 4.2,
+      "avg_ms": 0.4,
+      "rps": 39129.5,
+      "p50_ms": 0.3,
+      "p95_ms": 1.1,
+      "p99_ms": 2.1
     },
     "endpoint": "GET /api/v1/whoami"
   },
   "first_run": {
     "status": "applied",
-    "upload_s": 0.0027140950005559716,
-    "create_to_planned_s": 0.20538511899940204,
-    "create_to_applied_s": 0.3073949249992438,
-    "total_s": 0.3110709749998932
+    "upload_s": 0.004113695999876654,
+    "create_to_planned_s": 0.20588108499941882,
+    "create_to_applied_s": 0.30780980799954705,
+    "total_s": 0.3134577939999872
   },
   "e2e_serial": {
     "create_to_planned_s": {
       "n": 5,
       "min": 0.2,
-      "median": 0.2,
-      "max": 0.21,
-      "mean": 0.2
-    },
-    "create_to_applied_s": {
-      "n": 5,
-      "min": 0.2,
-      "median": 0.2,
-      "max": 0.21,
-      "mean": 0.2
-    },
-    "total_s": {
-      "n": 5,
-      "min": 0.21,
       "median": 0.21,
       "max": 0.21,
       "mean": 0.21
+    },
+    "create_to_applied_s": {
+      "n": 5,
+      "min": 0.31,
+      "median": 0.31,
+      "max": 0.31,
+      "mean": 0.31
+    },
+    "total_s": {
+      "n": 5,
+      "min": 0.31,
+      "median": 0.31,
+      "max": 0.32,
+      "mean": 0.31
     },
     "statuses": [
       "applied",
@@ -109,8 +109,8 @@
       "n": 5,
       "min": 0.21,
       "median": 0.21,
-      "max": 0.21,
-      "mean": 0.21
+      "max": 0.31,
+      "mean": 0.23
     },
     "statuses": [
       "planned_and_finished",
@@ -122,13 +122,13 @@
   },
   "e2e_parallel": {
     "runs": 5,
-    "wall_s": 0.74,
+    "wall_s": 0.85,
     "per_run_total_s": {
       "n": 5,
-      "min": 0.54,
-      "median": 0.54,
-      "max": 0.74,
-      "mean": 0.58
+      "min": 0.64,
+      "median": 0.65,
+      "max": 0.84,
+      "mean": 0.69
     },
     "statuses": [
       "applied",
@@ -141,10 +141,10 @@
   "e2e_longpoll": {
     "total_s": {
       "n": 5,
-      "min": 0.17,
-      "median": 0.19,
-      "max": 0.27,
-      "mean": 0.2
+      "min": 0.21,
+      "median": 0.21,
+      "max": 0.24,
+      "mean": 0.22
     },
     "statuses": [
       "applied",
@@ -157,20 +157,20 @@
   "resources": {
     "idle": {
       "cairn-cairnd": {
-        "samples": 298,
-        "window_s": 59.7,
-        "rss_mib_avg": 1.6,
-        "rss_mib_max": 1.6,
-        "ws_mib_avg": 2.7,
-        "ws_mib_max": 2.7,
+        "samples": 299,
+        "window_s": 59.8,
+        "rss_mib_avg": 3.3,
+        "rss_mib_max": 3.3,
+        "ws_mib_avg": 4.4,
+        "ws_mib_max": 4.4,
         "cpu_s": 0.0,
         "cpu_pct_avg": 0.0
       },
       "_total": {
-        "rss_mib_avg": 1.6,
-        "rss_mib_max": 1.6,
-        "ws_mib_avg": 2.7,
-        "ws_mib_max": 2.7,
+        "rss_mib_avg": 3.3,
+        "rss_mib_max": 3.3,
+        "ws_mib_avg": 4.4,
+        "ws_mib_max": 4.4,
         "cpu_s": 0.0
       }
     },
@@ -178,76 +178,76 @@
       "cairn-cairnd": {
         "samples": 3,
         "window_s": 0.4,
-        "rss_mib_avg": 3.0,
-        "rss_mib_max": 3.5,
-        "ws_mib_avg": 4.2,
-        "ws_mib_max": 4.7,
-        "cpu_s": 0.66,
-        "cpu_pct_avg": 164.05
+        "rss_mib_avg": 5.0,
+        "rss_mib_max": 5.7,
+        "ws_mib_avg": 6.4,
+        "ws_mib_max": 7.2,
+        "cpu_s": 0.7381,
+        "cpu_pct_avg": 184.0687
       },
       "_total": {
-        "rss_mib_avg": 3.0,
-        "rss_mib_max": 3.5,
-        "ws_mib_avg": 4.2,
-        "ws_mib_max": 4.7,
+        "rss_mib_avg": 5.0,
+        "rss_mib_max": 5.7,
+        "ws_mib_avg": 6.4,
+        "ws_mib_max": 7.2,
         "cpu_s": 0.7
       }
     },
     "e2e_serial": {
       "cairn-cairnd": {
-        "samples": 5,
-        "window_s": 0.8,
-        "rss_mib_avg": 10.2,
-        "rss_mib_max": 15.1,
-        "ws_mib_avg": 12.2,
-        "ws_mib_max": 16.9,
-        "cpu_s": 1.74,
-        "cpu_pct_avg": 217.15
+        "samples": 8,
+        "window_s": 1.4,
+        "rss_mib_avg": 17.9,
+        "rss_mib_max": 25.4,
+        "ws_mib_avg": 20.0,
+        "ws_mib_max": 27.9,
+        "cpu_s": 2.4976,
+        "cpu_pct_avg": 178.0182
       },
       "_total": {
-        "rss_mib_avg": 10.2,
-        "rss_mib_max": 15.1,
-        "ws_mib_avg": 12.2,
-        "ws_mib_max": 16.9,
-        "cpu_s": 1.7
+        "rss_mib_avg": 17.9,
+        "rss_mib_max": 25.4,
+        "ws_mib_avg": 20.0,
+        "ws_mib_max": 27.9,
+        "cpu_s": 2.5
       }
     },
     "e2e_parallel": {
       "cairn-cairnd": {
-        "samples": 3,
-        "window_s": 0.4,
-        "rss_mib_avg": 54.4,
-        "rss_mib_max": 81.3,
-        "ws_mib_avg": 58.3,
-        "ws_mib_max": 85.9,
-        "cpu_s": 1.25,
-        "cpu_pct_avg": 311.41
+        "samples": 4,
+        "window_s": 0.6,
+        "rss_mib_avg": 56.8,
+        "rss_mib_max": 92.9,
+        "ws_mib_avg": 60.9,
+        "ws_mib_max": 97.8,
+        "cpu_s": 2.0535,
+        "cpu_pct_avg": 341.6854
       },
       "_total": {
-        "rss_mib_avg": 54.4,
-        "rss_mib_max": 81.3,
-        "ws_mib_avg": 58.3,
-        "ws_mib_max": 85.9,
-        "cpu_s": 1.2
+        "rss_mib_avg": 56.8,
+        "rss_mib_max": 92.9,
+        "ws_mib_avg": 60.9,
+        "ws_mib_max": 97.8,
+        "cpu_s": 2.1
       }
     },
     "whole_run": {
       "cairn-cairnd": {
-        "samples": 475,
-        "window_s": 95.2,
-        "rss_mib_avg": 2.3,
-        "rss_mib_max": 81.3,
-        "ws_mib_avg": 3.4,
-        "ws_mib_max": 85.9,
-        "cpu_s": 9.95,
-        "cpu_pct_avg": 10.45
+        "samples": 481,
+        "window_s": 96.3,
+        "rss_mib_avg": 4.3,
+        "rss_mib_max": 92.9,
+        "ws_mib_avg": 5.5,
+        "ws_mib_max": 97.8,
+        "cpu_s": 11.467,
+        "cpu_pct_avg": 11.9073
       },
       "_total": {
-        "rss_mib_avg": 2.3,
-        "rss_mib_max": 81.3,
-        "ws_mib_avg": 3.4,
-        "ws_mib_max": 85.9,
-        "cpu_s": 9.9
+        "rss_mib_avg": 4.3,
+        "rss_mib_max": 92.9,
+        "ws_mib_avg": 5.5,
+        "ws_mib_max": 97.8,
+        "cpu_s": 11.5
       }
     }
   },
@@ -257,7 +257,7 @@
     "mem_mib": 16091,
     "kernel": "6.18.44-fc-v233",
     "arch": "x86_64",
-    "date": "2026-11-04T10:55:25Z"
+    "date": "2026-11-04T12:47:50Z"
   },
   "constraint": null
 }

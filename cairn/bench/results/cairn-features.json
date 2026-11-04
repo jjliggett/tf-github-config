@@ -1,0 +1,267 @@
+{
+  "tool": "cairn-features",
+  "version": "0.1.0",
+  "images": {
+    "cairn-bench/cairnd:0.1.0": 25070312
+  },
+  "cold_start": {
+    "healthz_s": 0.2,
+    "poll_s": 0.014
+  },
+  "create_workspace_avg_ms": 1.1,
+  "features": [
+    "writer-scoped service token (RBAC on every request)",
+    "plan policy on every stack"
+  ],
+  "api_load": {
+    "c1": {
+      "requests": 320,
+      "concurrency": 1,
+      "status": {
+        "200": 320
+      },
+      "max_ms": 2.1,
+      "avg_ms": 0.6,
+      "rps": 1723.5,
+      "p50_ms": 0.6,
+      "p95_ms": 0.8,
+      "p99_ms": 1.7
+    },
+    "c16": {
+      "requests": 3200,
+      "concurrency": 16,
+      "status": {
+        "200": 3200
+      },
+      "max_ms": 5.8,
+      "avg_ms": 2.0,
+      "rps": 7738.8,
+      "p50_ms": 2.0,
+      "p95_ms": 3.4,
+      "p99_ms": 4.4
+    },
+    "endpoint": "GET /api/v2/organizations/:org/workspaces (all 50 in one page)"
+  },
+  "api_trivial": {
+    "c1": {
+      "requests": 320,
+      "concurrency": 1,
+      "status": {
+        "200": 320
+      },
+      "max_ms": 1.3,
+      "avg_ms": 0.1,
+      "rps": 8653.2,
+      "p50_ms": 0.1,
+      "p95_ms": 0.2,
+      "p99_ms": 0.7
+    },
+    "c16": {
+      "requests": 3200,
+      "concurrency": 16,
+      "status": {
+        "200": 3200
+      },
+      "max_ms": 6.6,
+      "avg_ms": 0.4,
+      "rps": 36131.5,
+      "p50_ms": 0.3,
+      "p95_ms": 1.3,
+      "p99_ms": 2.5
+    },
+    "endpoint": "GET /api/v1/whoami"
+  },
+  "first_run": {
+    "status": "applied",
+    "upload_s": 0.0035953019996668445,
+    "create_to_planned_s": 0.30815369700030715,
+    "create_to_applied_s": 0.4101332830005049,
+    "total_s": 0.4150214560004315
+  },
+  "e2e_serial": {
+    "create_to_planned_s": {
+      "n": 5,
+      "min": 0.31,
+      "median": 0.31,
+      "max": 0.31,
+      "mean": 0.31
+    },
+    "create_to_applied_s": {
+      "n": 5,
+      "min": 0.41,
+      "median": 0.41,
+      "max": 0.42,
+      "mean": 0.41
+    },
+    "total_s": {
+      "n": 5,
+      "min": 0.41,
+      "median": 0.42,
+      "max": 0.42,
+      "mean": 0.42
+    },
+    "statuses": [
+      "applied",
+      "applied",
+      "applied",
+      "applied",
+      "applied"
+    ]
+  },
+  "e2e_noop": {
+    "total_s": {
+      "n": 5,
+      "min": 0.31,
+      "median": 0.31,
+      "max": 0.31,
+      "mean": 0.31
+    },
+    "statuses": [
+      "planned_and_finished",
+      "planned_and_finished",
+      "planned_and_finished",
+      "planned_and_finished",
+      "planned_and_finished"
+    ]
+  },
+  "e2e_parallel": {
+    "runs": 5,
+    "wall_s": 1.16,
+    "per_run_total_s": {
+      "n": 5,
+      "min": 0.74,
+      "median": 0.84,
+      "max": 1.16,
+      "mean": 0.87
+    },
+    "statuses": [
+      "applied",
+      "applied",
+      "applied",
+      "applied",
+      "applied"
+    ]
+  },
+  "e2e_longpoll": {
+    "total_s": {
+      "n": 5,
+      "min": 0.34,
+      "median": 0.34,
+      "max": 0.36,
+      "mean": 0.34
+    },
+    "statuses": [
+      "applied",
+      "applied",
+      "applied",
+      "applied",
+      "applied"
+    ]
+  },
+  "resources": {
+    "idle": {
+      "cairn-cairnd": {
+        "samples": 298,
+        "window_s": 59.7,
+        "rss_mib_avg": 3.3,
+        "rss_mib_max": 3.3,
+        "ws_mib_avg": 4.2,
+        "ws_mib_max": 4.2,
+        "cpu_s": 0.0,
+        "cpu_pct_avg": 0.0
+      },
+      "_total": {
+        "rss_mib_avg": 3.3,
+        "rss_mib_max": 3.3,
+        "ws_mib_avg": 4.2,
+        "ws_mib_max": 4.2,
+        "cpu_s": 0.0
+      }
+    },
+    "api_load": {
+      "cairn-cairnd": {
+        "samples": 3,
+        "window_s": 0.4,
+        "rss_mib_avg": 5.2,
+        "rss_mib_max": 5.9,
+        "ws_mib_avg": 6.4,
+        "ws_mib_max": 7.2,
+        "cpu_s": 0.9994,
+        "cpu_pct_avg": 249.2259
+      },
+      "_total": {
+        "rss_mib_avg": 5.2,
+        "rss_mib_max": 5.9,
+        "ws_mib_avg": 6.4,
+        "ws_mib_max": 7.2,
+        "cpu_s": 1.0
+      }
+    },
+    "e2e_serial": {
+      "cairn-cairnd": {
+        "samples": 10,
+        "window_s": 1.8,
+        "rss_mib_avg": 21.7,
+        "rss_mib_max": 29.4,
+        "ws_mib_avg": 23.7,
+        "ws_mib_max": 31.6,
+        "cpu_s": 3.0652,
+        "cpu_pct_avg": 169.8181
+      },
+      "_total": {
+        "rss_mib_avg": 21.7,
+        "rss_mib_max": 29.4,
+        "ws_mib_avg": 23.7,
+        "ws_mib_max": 31.6,
+        "cpu_s": 3.1
+      }
+    },
+    "e2e_parallel": {
+      "cairn-cairnd": {
+        "samples": 5,
+        "window_s": 0.8,
+        "rss_mib_avg": 41.4,
+        "rss_mib_max": 81.6,
+        "ws_mib_avg": 45.4,
+        "ws_mib_max": 86.3,
+        "cpu_s": 2.6112,
+        "cpu_pct_avg": 325.995
+      },
+      "_total": {
+        "rss_mib_avg": 41.4,
+        "rss_mib_max": 81.6,
+        "ws_mib_avg": 45.4,
+        "ws_mib_max": 86.3,
+        "cpu_s": 2.6
+      }
+    },
+    "whole_run": {
+      "cairn-cairnd": {
+        "samples": 490,
+        "window_s": 98.2,
+        "rss_mib_avg": 4.8,
+        "rss_mib_max": 81.6,
+        "ws_mib_avg": 5.8,
+        "ws_mib_max": 86.3,
+        "cpu_s": 14.6429,
+        "cpu_pct_avg": 14.9142
+      },
+      "_total": {
+        "rss_mib_avg": 4.8,
+        "rss_mib_max": 81.6,
+        "ws_mib_avg": 5.8,
+        "ws_mib_max": 86.3,
+        "cpu_s": 14.6
+      }
+    }
+  },
+  "host": {
+    "cpus": 4,
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "mem_mib": 16091,
+    "kernel": "6.18.44-fc-v233",
+    "arch": "x86_64",
+    "date": "2026-11-04T12:51:11Z"
+  },
+  "constraint": null
+}
