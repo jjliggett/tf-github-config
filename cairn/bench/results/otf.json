@@ -1,0 +1,269 @@
+{
+  "tool": "otf",
+  "version": "0.6.3",
+  "images": {
+    "leg100/otfd:0.6.3": 140458016,
+    "postgres:16-alpine": 419074005
+  },
+  "cold_start": {
+    "healthz_s": 0.68,
+    "poll_s": 0.51
+  },
+  "create_workspace_avg_ms": 6.8,
+  "api_load": {
+    "c1": {
+      "requests": 320,
+      "concurrency": 1,
+      "status": {
+        "200": 320
+      },
+      "max_ms": 235.7,
+      "avg_ms": 156.6,
+      "rps": 6.4,
+      "p50_ms": 152.3,
+      "p95_ms": 191.8,
+      "p99_ms": 229.5
+    },
+    "c16": {
+      "requests": 3200,
+      "concurrency": 16,
+      "status": {
+        "200": 3200
+      },
+      "max_ms": 1093.9,
+      "avg_ms": 886.5,
+      "rps": 18.0,
+      "p50_ms": 880.8,
+      "p95_ms": 967.7,
+      "p99_ms": 1011.5
+    },
+    "endpoint": "GET /api/v2/organizations/:org/workspaces (all 50 in one page)"
+  },
+  "first_run": {
+    "status": "applied",
+    "upload_s": 0.006061609999960638,
+    "create_to_planned_s": 0.22924989500006632,
+    "create_to_applied_s": 0.4505464470003062,
+    "total_s": 0.4788715750000847
+  },
+  "e2e_serial": {
+    "create_to_planned_s": {
+      "n": 5,
+      "min": 0.22,
+      "median": 0.22,
+      "max": 0.24,
+      "mean": 0.23
+    },
+    "create_to_applied_s": {
+      "n": 5,
+      "min": 0.44,
+      "median": 0.44,
+      "max": 0.46,
+      "mean": 0.45
+    },
+    "total_s": {
+      "n": 5,
+      "min": 0.46,
+      "median": 0.46,
+      "max": 0.48,
+      "mean": 0.46
+    },
+    "statuses": [
+      "applied",
+      "applied",
+      "applied",
+      "applied",
+      "applied"
+    ]
+  },
+  "e2e_noop": {
+    "total_s": {
+      "n": 5,
+      "min": 0.24,
+      "median": 0.24,
+      "max": 0.25,
+      "mean": 0.24
+    },
+    "statuses": [
+      "planned_and_finished",
+      "planned_and_finished",
+      "planned_and_finished",
+      "planned_and_finished",
+      "planned_and_finished"
+    ]
+  },
+  "e2e_parallel": {
+    "runs": 5,
+    "wall_s": 1.01,
+    "per_run_total_s": {
+      "n": 5,
+      "min": 0.88,
+      "median": 0.99,
+      "max": 1.0,
+      "mean": 0.96
+    },
+    "statuses": [
+      "applied",
+      "applied",
+      "applied",
+      "applied",
+      "applied"
+    ]
+  },
+  "resources": {
+    "idle": {
+      "otf-postgres": {
+        "samples": 299,
+        "window_s": 59.7,
+        "rss_mib_avg": 22.6,
+        "rss_mib_max": 23.7,
+        "ws_mib_avg": 59.0,
+        "ws_mib_max": 61.0,
+        "cpu_s": 0.15,
+        "cpu_pct_avg": 0.26
+      },
+      "otf-otfd": {
+        "samples": 299,
+        "window_s": 59.7,
+        "rss_mib_avg": 13.2,
+        "rss_mib_max": 13.3,
+        "ws_mib_avg": 14.4,
+        "ws_mib_max": 14.4,
+        "cpu_s": 0.01,
+        "cpu_pct_avg": 0.02
+      },
+      "_total": {
+        "rss_mib_avg": 35.8,
+        "rss_mib_max": 37.0,
+        "ws_mib_avg": 73.4,
+        "ws_mib_max": 75.4,
+        "cpu_s": 0.2
+      }
+    },
+    "api_load": {
+      "otf-postgres": {
+        "samples": 1135,
+        "window_s": 227.3,
+        "rss_mib_avg": 30.5,
+        "rss_mib_max": 34.0,
+        "ws_mib_avg": 68.9,
+        "ws_mib_max": 72.3,
+        "cpu_s": 410.05,
+        "cpu_pct_avg": 180.36
+      },
+      "otf-otfd": {
+        "samples": 1135,
+        "window_s": 227.3,
+        "rss_mib_avg": 23.7,
+        "rss_mib_max": 31.3,
+        "ws_mib_avg": 25.0,
+        "ws_mib_max": 32.6,
+        "cpu_s": 262.05,
+        "cpu_pct_avg": 115.26
+      },
+      "_total": {
+        "rss_mib_avg": 54.2,
+        "rss_mib_max": 65.3,
+        "ws_mib_avg": 93.9,
+        "ws_mib_max": 104.9,
+        "cpu_s": 672.1
+      }
+    },
+    "e2e_serial": {
+      "otf-postgres": {
+        "samples": 12,
+        "window_s": 2.2,
+        "rss_mib_avg": 41.4,
+        "rss_mib_max": 43.7,
+        "ws_mib_avg": 81.0,
+        "ws_mib_max": 83.6,
+        "cpu_s": 0.64,
+        "cpu_pct_avg": 29.17
+      },
+      "otf-otfd": {
+        "samples": 12,
+        "window_s": 2.2,
+        "rss_mib_avg": 26.6,
+        "rss_mib_max": 36.2,
+        "ws_mib_avg": 28.3,
+        "ws_mib_max": 38.2,
+        "cpu_s": 2.62,
+        "cpu_pct_avg": 118.81
+      },
+      "_total": {
+        "rss_mib_avg": 68.0,
+        "rss_mib_max": 79.9,
+        "ws_mib_avg": 109.3,
+        "ws_mib_max": 121.8,
+        "cpu_s": 3.3
+      }
+    },
+    "e2e_parallel": {
+      "otf-postgres": {
+        "samples": 5,
+        "window_s": 0.8,
+        "rss_mib_avg": 49.2,
+        "rss_mib_max": 51.6,
+        "ws_mib_avg": 89.8,
+        "ws_mib_max": 92.8,
+        "cpu_s": 0.6,
+        "cpu_pct_avg": 74.79
+      },
+      "otf-otfd": {
+        "samples": 5,
+        "window_s": 0.8,
+        "rss_mib_avg": 68.5,
+        "rss_mib_max": 102.5,
+        "ws_mib_avg": 71.9,
+        "ws_mib_max": 106.5,
+        "cpu_s": 2.27,
+        "cpu_pct_avg": 282.93
+      },
+      "_total": {
+        "rss_mib_avg": 117.7,
+        "rss_mib_max": 154.1,
+        "ws_mib_avg": 161.7,
+        "ws_mib_max": 199.3,
+        "cpu_s": 2.9
+      }
+    },
+    "whole_run": {
+      "otf-postgres": {
+        "samples": 1616,
+        "window_s": 323.8,
+        "rss_mib_avg": 28.4,
+        "rss_mib_max": 51.7,
+        "ws_mib_avg": 66.1,
+        "ws_mib_max": 92.9,
+        "cpu_s": 413.18,
+        "cpu_pct_avg": 127.6
+      },
+      "otf-otfd": {
+        "samples": 1615,
+        "window_s": 323.6,
+        "rss_mib_avg": 21.0,
+        "rss_mib_max": 102.5,
+        "ws_mib_avg": 22.2,
+        "ws_mib_max": 106.5,
+        "cpu_s": 269.7,
+        "cpu_pct_avg": 83.35
+      },
+      "_total": {
+        "rss_mib_avg": 49.4,
+        "rss_mib_max": 154.2,
+        "ws_mib_avg": 88.3,
+        "ws_mib_max": 199.4,
+        "cpu_s": 682.9
+      }
+    }
+  },
+  "host": {
+    "cpus": 4,
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "mem_mib": 16091,
+    "kernel": "6.18.44-fc-v233",
+    "arch": "x86_64",
+    "date": "2026-11-04T05:28:31Z"
+  },
+  "constraint": null
+}

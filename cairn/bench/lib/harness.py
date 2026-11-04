@@ -248,14 +248,16 @@ def stats(values):
 def baseline_tofu(runs=5):
     """Plain `tofu plan` / `tofu apply` on the host: the floor every tool sits on."""
     import tempfile
-    plans, applies = [], []
+    inits, plans, applies = [], [], []
     for _ in range(runs):
         d = tempfile.mkdtemp(prefix="tofu-baseline-", dir=WORK)
         for f in os.listdir(FIXTURE):
             if f.endswith(".tf"):
                 shutil.copy(os.path.join(FIXTURE, f), d)
         env = dict(os.environ, TF_IN_AUTOMATION="1")
+        t = time.monotonic()
         sh([TOFU_BIN, "init", "-input=false", "-no-color"], cwd=d, capture=True, env=env)
+        inits.append(time.monotonic() - t)
         t = time.monotonic()
         sh([TOFU_BIN, "plan", "-input=false", "-no-color", "-out=plan"], cwd=d, capture=True, env=env)
         plans.append(time.monotonic() - t)
@@ -263,7 +265,7 @@ def baseline_tofu(runs=5):
         sh([TOFU_BIN, "apply", "-input=false", "-no-color", "plan"], cwd=d, capture=True, env=env)
         applies.append(time.monotonic() - t)
         shutil.rmtree(d)
-    return {"plan_s": stats(plans), "apply_s": stats(applies)}
+    return {"init_s": stats(inits), "plan_s": stats(plans), "apply_s": stats(applies)}
 
 
 def save(tool, data):

@@ -1,0 +1,31 @@
+{
+  "tool": "otf",
+  "version": "0.6.3",
+  "requests": {
+    "background, no requests (n=1 window)": {
+      "transactions_per_request": 32.0,
+      "tuples_returned_per_request": 4576.0
+    },
+    "list 50 workspaces": {
+      "transactions_per_request": 1004.6,
+      "tuples_returned_per_request": 1246.0
+    },
+    "list 10 workspaces": {
+      "transactions_per_request": 205.6,
+      "tuples_returned_per_request": 907.8
+    },
+    "get 1 workspace": {
+      "transactions_per_request": 25.2,
+      "tuples_returned_per_request": 107.2
+    }
+  },
+  "host": {
+    "cpus": 4,
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "mem_mib": 16091,
+    "kernel": "6.18.44-fc-v233",
+    "arch": "x86_64",
+    "date": "2026-11-04T05:43:29Z"
+  },
+  "constraint": null
+}

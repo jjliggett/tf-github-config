@@ -1,0 +1,36 @@
+{
+  "tool": "tofu (no orchestrator)",
+  "version": "1.11.6",
+  "runs": {
+    "init_s": {
+      "n": 5,
+      "min": 0.03,
+      "median": 0.03,
+      "max": 0.03,
+      "mean": 0.03
+    },
+    "plan_s": {
+      "n": 5,
+      "min": 0.07,
+      "median": 0.07,
+      "max": 0.08,
+      "mean": 0.07
+    },
+    "apply_s": {
+      "n": 5,
+      "min": 0.07,
+      "median": 0.07,
+      "max": 0.09,
+      "mean": 0.08
+    }
+  },
+  "host": {
+    "cpus": 4,
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "mem_mib": 16091,
+    "kernel": "6.18.44-fc-v233",
+    "arch": "x86_64",
+    "date": "2026-11-04T05:36:32Z"
+  },
+  "constraint": null
+}

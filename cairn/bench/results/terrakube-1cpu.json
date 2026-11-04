@@ -1,0 +1,528 @@
+{
+  "tool": "terrakube",
+  "version": "2.33.3",
+  "images": {
+    "azbuilder/api-server:2.33.3": 962898122,
+    "azbuilder/executor:2.33.3": 1140807196,
+    "azbuilder/open-registry:2.33.3": 753496844,
+    "azbuilder/terrakube-ui:2.33.3": 250624018,
+    "dexidp/dex:v2.43.1": 177955810,
+    "valkey/valkey:8-alpine": 61599957,
+    "postgres:16-alpine": 419074005
+  },
+  "cold_start": {
+    "ui": 1.18,
+    "registry": 41.49,
+    "executor": 46.79,
+    "api": 94.39,
+    "all_s": 94.39
+  },
+  "create_workspace_avg_ms": 95.7,
+  "api_load": {
+    "c1": {
+      "requests": 64,
+      "concurrency": 1,
+      "status": {
+        "200": 64
+      },
+      "max_ms": 1102.4,
+      "avg_ms": 315.3,
+      "rps": 3.2,
+      "p50_ms": 310.9,
+      "p95_ms": 683.2
+    },
+    "c16": {
+      "requests": 640,
+      "concurrency": 16,
+      "status": {
+        "200": 640
+      },
+      "max_ms": 8996.6,
+      "avg_ms": 2547.5,
+      "rps": 6.2,
+      "p50_ms": 2290.5,
+      "p95_ms": 5305.0,
+      "p99_ms": 8008.7
+    },
+    "endpoint": "GET /api/v1/organization/:org/workspace (all 50; endpoint cannot paginate)"
+  },
+  "first_run": {
+    "status": "completed",
+    "create_to_planned_s": 23.59318119300042,
+    "create_to_applied_s": 42.37738301900026,
+    "total_s": 42.37738301900026
+  },
+  "e2e_serial": {
+    "create_to_planned_s": {
+      "n": 5,
+      "min": 11.1,
+      "median": 11.7,
+      "max": 12.68,
+      "mean": 11.7
+    },
+    "create_to_applied_s": {
+      "n": 5,
+      "min": 27.89,
+      "median": 28.91,
+      "max": 29.67,
+      "mean": 28.78
+    },
+    "total_s": {
+      "n": 5,
+      "min": 27.89,
+      "median": 28.91,
+      "max": 29.67,
+      "mean": 28.78
+    },
+    "statuses": [
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+      "completed"
+    ]
+  },
+  "e2e_noop": {
+    "total_s": {
+      "n": 5,
+      "min": 10.99,
+      "median": 11.06,
+      "max": 11.24,
+      "mean": 11.08
+    },
+    "statuses": [
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+      "completed"
+    ]
+  },
+  "e2e_parallel": {
+    "runs": 5,
+    "wall_s": 147.49,
+    "per_run_total_s": {
+      "n": 5,
+      "min": 29.91,
+      "median": 88.5,
+      "max": 147.49,
+      "mean": 88.36
+    },
+    "statuses": [
+      "completed",
+      "completed",
+      "completed",
+      "completed",
+      "completed"
+    ]
+  },
+  "resources": {
+    "idle": {
+      "tk-dex": {
+        "samples": 299,
+        "window_s": 59.9,
+        "rss_mib_avg": 6.5,
+        "rss_mib_max": 6.5,
+        "ws_mib_avg": 7.3,
+        "ws_mib_max": 7.5,
+        "cpu_s": 0.0,
+        "cpu_pct_avg": 0.0
+      },
+      "tk-redis": {
+        "samples": 299,
+        "window_s": 59.9,
+        "rss_mib_avg": 2.7,
+        "rss_mib_max": 2.7,
+        "ws_mib_avg": 3.8,
+        "ws_mib_max": 4.1,
+        "cpu_s": 0.1,
+        "cpu_pct_avg": 0.17
+      },
+      "tk-postgres": {
+        "samples": 299,
+        "window_s": 59.9,
+        "rss_mib_avg": 14.3,
+        "rss_mib_max": 14.4,
+        "ws_mib_avg": 49.3,
+        "ws_mib_max": 49.7,
+        "cpu_s": 0.07,
+        "cpu_pct_avg": 0.12
+      },
+      "tk-api": {
+        "samples": 299,
+        "window_s": 59.9,
+        "rss_mib_avg": 2992.0,
+        "rss_mib_max": 2992.2,
+        "ws_mib_avg": 3002.2,
+        "ws_mib_max": 3002.7,
+        "cpu_s": 0.39,
+        "cpu_pct_avg": 0.65
+      },
+      "tk-executor": {
+        "samples": 299,
+        "window_s": 59.9,
+        "rss_mib_avg": 382.5,
+        "rss_mib_max": 382.5,
+        "ws_mib_avg": 386.2,
+        "ws_mib_max": 386.4,
+        "cpu_s": 0.13,
+        "cpu_pct_avg": 0.22
+      },
+      "tk-registry": {
+        "samples": 299,
+        "window_s": 59.9,
+        "rss_mib_avg": 280.1,
+        "rss_mib_max": 280.1,
+        "ws_mib_avg": 283.4,
+        "ws_mib_max": 283.5,
+        "cpu_s": 0.09,
+        "cpu_pct_avg": 0.15
+      },
+      "tk-ui": {
+        "samples": 299,
+        "window_s": 59.9,
+        "rss_mib_avg": 3.7,
+        "rss_mib_max": 3.7,
+        "ws_mib_avg": 4.6,
+        "ws_mib_max": 4.6,
+        "cpu_s": 0.0,
+        "cpu_pct_avg": 0.0
+      },
+      "_total": {
+        "rss_mib_avg": 3681.8,
+        "rss_mib_max": 3682.1,
+        "ws_mib_avg": 3736.8,
+        "ws_mib_max": 3738.5,
+        "cpu_s": 0.8
+      }
+    },
+    "api_load": {
+      "tk-dex": {
+        "samples": 613,
+        "window_s": 122.9,
+        "rss_mib_avg": 6.5,
+        "rss_mib_max": 6.6,
+        "ws_mib_avg": 7.1,
+        "ws_mib_max": 7.6,
+        "cpu_s": 0.01,
+        "cpu_pct_avg": 0.01
+      },
+      "tk-redis": {
+        "samples": 613,
+        "window_s": 122.9,
+        "rss_mib_avg": 2.7,
+        "rss_mib_max": 2.7,
+        "ws_mib_avg": 4.0,
+        "ws_mib_max": 4.1,
+        "cpu_s": 0.17,
+        "cpu_pct_avg": 0.14
+      },
+      "tk-postgres": {
+        "samples": 613,
+        "window_s": 122.9,
+        "rss_mib_avg": 33.0,
+        "rss_mib_max": 37.9,
+        "ws_mib_avg": 69.6,
+        "ws_mib_max": 75.4,
+        "cpu_s": 22.22,
+        "cpu_pct_avg": 18.07
+      },
+      "tk-api": {
+        "samples": 613,
+        "window_s": 122.9,
+        "rss_mib_avg": 2551.8,
+        "rss_mib_max": 7312.9,
+        "ws_mib_avg": 2561.6,
+        "ws_mib_max": 7332.3,
+        "cpu_s": 99.8,
+        "cpu_pct_avg": 81.19
+      },
+      "tk-executor": {
+        "samples": 613,
+        "window_s": 122.9,
+        "rss_mib_avg": 382.5,
+        "rss_mib_max": 382.6,
+        "ws_mib_avg": 386.0,
+        "ws_mib_max": 386.2,
+        "cpu_s": 0.21,
+        "cpu_pct_avg": 0.17
+      },
+      "tk-registry": {
+        "samples": 613,
+        "window_s": 122.9,
+        "rss_mib_avg": 280.1,
+        "rss_mib_max": 280.2,
+        "ws_mib_avg": 283.2,
+        "ws_mib_max": 283.6,
+        "cpu_s": 0.14,
+        "cpu_pct_avg": 0.11
+      },
+      "tk-ui": {
+        "samples": 613,
+        "window_s": 122.9,
+        "rss_mib_avg": 3.7,
+        "rss_mib_max": 3.7,
+        "ws_mib_avg": 4.6,
+        "ws_mib_max": 4.6,
+        "cpu_s": 0.0,
+        "cpu_pct_avg": 0.0
+      },
+      "_total": {
+        "rss_mib_avg": 3260.3,
+        "rss_mib_max": 8026.6,
+        "ws_mib_avg": 3316.1,
+        "ws_mib_max": 8093.8,
+        "cpu_s": 122.5
+      }
+    },
+    "e2e_serial": {
+      "tk-dex": {
+        "samples": 717,
+        "window_s": 143.8,
+        "rss_mib_avg": 6.4,
+        "rss_mib_max": 6.4,
+        "ws_mib_avg": 7.0,
+        "ws_mib_max": 7.2,
+        "cpu_s": 0.01,
+        "cpu_pct_avg": 0.01
+      },
+      "tk-redis": {
+        "samples": 717,
+        "window_s": 143.8,
+        "rss_mib_avg": 3.4,
+        "rss_mib_max": 3.7,
+        "ws_mib_avg": 4.6,
+        "ws_mib_max": 4.9,
+        "cpu_s": 0.65,
+        "cpu_pct_avg": 0.45
+      },
+      "tk-postgres": {
+        "samples": 717,
+        "window_s": 143.8,
+        "rss_mib_avg": 45.9,
+        "rss_mib_max": 48.6,
+        "ws_mib_avg": 83.6,
+        "ws_mib_max": 86.3,
+        "cpu_s": 3.21,
+        "cpu_pct_avg": 2.23
+      },
+      "tk-api": {
+        "samples": 717,
+        "window_s": 143.8,
+        "rss_mib_avg": 895.1,
+        "rss_mib_max": 897.7,
+        "ws_mib_avg": 901.6,
+        "ws_mib_max": 904.5,
+        "cpu_s": 28.89,
+        "cpu_pct_avg": 20.08
+      },
+      "tk-executor": {
+        "samples": 717,
+        "window_s": 143.8,
+        "rss_mib_avg": 414.3,
+        "rss_mib_max": 442.1,
+        "ws_mib_avg": 494.3,
+        "ws_mib_max": 525.0,
+        "cpu_s": 10.67,
+        "cpu_pct_avg": 7.42
+      },
+      "tk-registry": {
+        "samples": 717,
+        "window_s": 143.8,
+        "rss_mib_avg": 280.3,
+        "rss_mib_max": 280.3,
+        "ws_mib_avg": 283.1,
+        "ws_mib_max": 283.5,
+        "cpu_s": 0.16,
+        "cpu_pct_avg": 0.11
+      },
+      "tk-ui": {
+        "samples": 717,
+        "window_s": 143.8,
+        "rss_mib_avg": 3.7,
+        "rss_mib_max": 3.7,
+        "ws_mib_avg": 4.6,
+        "ws_mib_max": 4.6,
+        "cpu_s": 0.0,
+        "cpu_pct_avg": 0.0
+      },
+      "_total": {
+        "rss_mib_avg": 1649.1,
+        "rss_mib_max": 1682.5,
+        "ws_mib_avg": 1778.8,
+        "ws_mib_max": 1816.0,
+        "cpu_s": 43.6
+      }
+    },
+    "e2e_parallel": {
+      "tk-dex": {
+        "samples": 734,
+        "window_s": 147.2,
+        "rss_mib_avg": 6.4,
+        "rss_mib_max": 6.4,
+        "ws_mib_avg": 7.0,
+        "ws_mib_max": 7.0,
+        "cpu_s": 0.01,
+        "cpu_pct_avg": 0.0
+      },
+      "tk-redis": {
+        "samples": 734,
+        "window_s": 147.2,
+        "rss_mib_avg": 3.8,
+        "rss_mib_max": 4.1,
+        "ws_mib_avg": 5.1,
+        "ws_mib_max": 5.3,
+        "cpu_s": 0.62,
+        "cpu_pct_avg": 0.42
+      },
+      "tk-postgres": {
+        "samples": 734,
+        "window_s": 147.2,
+        "rss_mib_avg": 58.5,
+        "rss_mib_max": 61.4,
+        "ws_mib_avg": 96.8,
+        "ws_mib_max": 100.3,
+        "cpu_s": 6.75,
+        "cpu_pct_avg": 4.59
+      },
+      "tk-api": {
+        "samples": 734,
+        "window_s": 147.2,
+        "rss_mib_avg": 904.8,
+        "rss_mib_max": 909.2,
+        "ws_mib_avg": 911.3,
+        "ws_mib_max": 916.0,
+        "cpu_s": 39.53,
+        "cpu_pct_avg": 26.85
+      },
+      "tk-executor": {
+        "samples": 734,
+        "window_s": 147.2,
+        "rss_mib_avg": 420.8,
+        "rss_mib_max": 449.1,
+        "ws_mib_avg": 506.7,
+        "ws_mib_max": 537.2,
+        "cpu_s": 7.6,
+        "cpu_pct_avg": 5.17
+      },
+      "tk-registry": {
+        "samples": 734,
+        "window_s": 147.2,
+        "rss_mib_avg": 280.3,
+        "rss_mib_max": 280.3,
+        "ws_mib_avg": 283.1,
+        "ws_mib_max": 283.3,
+        "cpu_s": 0.15,
+        "cpu_pct_avg": 0.1
+      },
+      "tk-ui": {
+        "samples": 734,
+        "window_s": 147.2,
+        "rss_mib_avg": 3.7,
+        "rss_mib_max": 3.7,
+        "ws_mib_avg": 4.6,
+        "ws_mib_max": 4.6,
+        "cpu_s": 0.0,
+        "cpu_pct_avg": 0.0
+      },
+      "_total": {
+        "rss_mib_avg": 1678.3,
+        "rss_mib_max": 1714.2,
+        "ws_mib_avg": 1814.6,
+        "ws_mib_max": 1853.7,
+        "cpu_s": 54.7
+      }
+    },
+    "whole_run": {
+      "tk-dex": {
+        "samples": 3500,
+        "window_s": 703.4,
+        "rss_mib_avg": 6.5,
+        "rss_mib_max": 6.6,
+        "ws_mib_avg": 7.0,
+        "ws_mib_max": 7.6,
+        "cpu_s": 0.04,
+        "cpu_pct_avg": 0.01
+      },
+      "tk-redis": {
+        "samples": 3500,
+        "window_s": 703.4,
+        "rss_mib_avg": 3.1,
+        "rss_mib_max": 4.1,
+        "ws_mib_avg": 4.4,
+        "ws_mib_max": 5.3,
+        "cpu_s": 2.05,
+        "cpu_pct_avg": 0.29
+      },
+      "tk-postgres": {
+        "samples": 3500,
+        "window_s": 703.4,
+        "rss_mib_avg": 36.9,
+        "rss_mib_max": 61.6,
+        "ws_mib_avg": 73.1,
+        "ws_mib_max": 100.3,
+        "cpu_s": 35.64,
+        "cpu_pct_avg": 5.07
+      },
+      "tk-api": {
+        "samples": 3498,
+        "window_s": 702.5,
+        "rss_mib_avg": 1447.8,
+        "rss_mib_max": 7312.9,
+        "ws_mib_avg": 1455.2,
+        "ws_mib_max": 7332.3,
+        "cpu_s": 263.18,
+        "cpu_pct_avg": 37.46
+      },
+      "tk-executor": {
+        "samples": 3498,
+        "window_s": 702.5,
+        "rss_mib_avg": 391.7,
+        "rss_mib_max": 449.1,
+        "ws_mib_avg": 437.6,
+        "ws_mib_max": 537.2,
+        "cpu_s": 45.73,
+        "cpu_pct_avg": 6.51
+      },
+      "tk-registry": {
+        "samples": 3498,
+        "window_s": 702.5,
+        "rss_mib_avg": 274.7,
+        "rss_mib_max": 280.3,
+        "ws_mib_avg": 277.6,
+        "ws_mib_max": 283.6,
+        "cpu_s": 13.57,
+        "cpu_pct_avg": 1.93
+      },
+      "tk-ui": {
+        "samples": 3497,
+        "window_s": 702.2,
+        "rss_mib_avg": 3.7,
+        "rss_mib_max": 3.7,
+        "ws_mib_avg": 4.6,
+        "ws_mib_max": 5.2,
+        "cpu_s": 0.02,
+        "cpu_pct_avg": 0.0
+      },
+      "_total": {
+        "rss_mib_avg": 2164.4,
+        "rss_mib_max": 8118.3,
+        "ws_mib_avg": 2259.5,
+        "ws_mib_max": 8271.5,
+        "cpu_s": 360.2
+      }
+    }
+  },
+  "host": {
+    "cpus": 4,
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "mem_mib": 16091,
+    "kernel": "6.18.44-fc-v233",
+    "arch": "x86_64",
+    "date": "2026-11-04T05:18:55Z"
+  },
+  "constraint": {
+    "cpus": 1.0,
+    "cgroup_parent": "/cairn-bench-1cpu"
+  }
+}

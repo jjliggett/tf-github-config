@@ -32,16 +32,18 @@ It combines:
   dependencies that pass outputs, policies at named decision points, proposed and
   tracked runs, local previews, and a scriptable CLI.
 
-The benchmarks set the bar. A plan+apply of 100 resources takes OpenTofu about
-0.15 s. OTF finishes in about 0.5 s and Terrakube in about 27 s, because of fixed
-sleeps in its executor. At idle, Terrakube's stack uses roughly 40 times OTF's
-memory. Cairn's budgets are in §9.
+The benchmarks set the bar. Init, plan and apply of 100 resources take
+OpenTofu 0.17 s. Measured from creating the run, OTF finishes in 0.44 s and Atlantis in
+0.57 s. Terrakube takes 27 s, because of fixed sleeps in its executor.
+OTF and Atlantis each start under a 16 MiB memory limit; Terrakube's three
+JVMs need 3.3 GiB of limits before they will start. Cairn's budgets (§9) beat
+the best measured value in each row.
 
 ## 2. Goals and non-goals
 
 ### Goals
 
-1. **Fit on a Pi 4 (4 GB) that is already busy.** One process, ≤ 25 MiB idle RSS
+1. **Fit on a Pi 4 (4 GB) that is already busy.** One process, ≤ 8 MiB idle RSS
    for `cairnd`, no JVM, no Redis, and no separate IdP proxy. SQLite by default,
    and your existing Postgres when you want it.
 2. **Be a drop-in TFC/TFE target for the OpenTofu CLI.** `tofu login`, the
@@ -62,7 +64,8 @@ memory. Cairn's budgets are in §9.
    infrastructure, structured plan summaries rather than raw logs, and an event
    stream.
 7. **Make runs fast**: event-driven scheduling with no fixed sleeps or polling
-   loops, so orchestration adds ≤ 300 ms to a run on x86 and ≤ 1 s on a Pi.
+   loops, so orchestration adds ≤ 100 ms to a run on the bench host (OTF adds
+   ~250 ms) and ≤ 500 ms under a 1-CPU budget.
 
 ### Non-goals (v1)
 
@@ -82,16 +85,16 @@ source, and the requirement Cairn takes from it.
 
 | # | Observation | Requirement for Cairn |
 |---|---|---|
-| R1 | Terrakube needs 4 app containers plus Dex, Valkey and Postgres (and MinIO and Traefik in the reference Compose file). That is about 1.5 GiB of compressed arm64 images and ~25 s for the API to be ready. | Single binary, at most 1 external dependency (Postgres, optional). Ready in ≤ 200 ms on x86 and ≤ 1 s on a Pi 4. Image ≤ 20 MiB compressed, excluding OpenTofu. |
-| R2 | Terrakube's executor sleeps for fixed periods (`Thread.sleep(5000)` ×2, `sleep(2000)`, ~3 s waits for the log stream) and uses Quartz polling. A 0.15 s tofu run takes ~27 s. | **No fixed sleeps anywhere on the run path.** Phases advance on events (child-process exit, notifications). Log completion is signalled by EOF, not timeouts. |
+| R1 | Terrakube needs 4 app containers plus Dex, Valkey and Postgres (and MinIO and Traefik in the reference Compose file). That is about 1.5 GiB of compressed arm64 images and ~25 s for the API to be ready. | Single binary, at most 1 external dependency (Postgres, optional). Ready in ≤ 0.1 s on the bench host and ≤ 0.2 s under a 1-CPU budget. Image ≤ 20 MiB compressed, excluding OpenTofu. |
+| R2 | Terrakube's executor sleeps for fixed periods (`Thread.sleep(5000)` ×2, `sleep(2000)`, ~3 s waits for the log stream) and uses Quartz polling. A run that takes OpenTofu 0.17 s takes ~27 s. | **No fixed sleeps anywhere on the run path.** Phases advance on events (child-process exit, notifications). Log completion is signalled by EOF, not timeouts. |
 | R3 | The Terrakube executor processes one job at a time (`setCorePoolSize(1)`), so 5 runs at once take 5 × 27 s. | Runner concurrency is configurable; the default is the number of CPUs. Runs of different stacks never block each other. |
-| R4 | Listing 50 workspaces in OTF takes ~20 ms unloaded and saturates around 130 req/s on 4 cores (one workspace read: ~4 ms). | List endpoints use one query per page, with no N+1 permission or "latest run" lookups. Targets: p50 ≤ 2 ms and ≥ 5,000 req/s at 16 clients on the bench host. |
+| R4 | Listing 50 workspaces in OTF takes 152 ms with 1 client and manages 18 req/s with 16 clients on 4 cores (a single workspace read takes ~4 ms). Each listed workspace gets 10 `CanAccess` checks with their own lookups (`internal/workspace/tfe_types.go`, `internal/authz/authorizer.go`): 1,005 Postgres transactions for one 50-workspace page. Terrakube manages 31 req/s for the same list. | List endpoints use one query per page, with no N+1 permission or "latest run" lookups. Targets: p50 ≤ 2 ms and ≥ 5,000 req/s at 16 clients on the bench host. |
 | R5 | Terrakube's workspace list cannot be paginated ("Cannot paginate workspace"); its UI fetches everything. | Every list endpoint is paginated (keyset cursor, `limit` ≤ 200). |
 | R6 | Atlantis's Gitea parser treats a PR closed without merging as "other", so its locks are never released (`ParseGiteaPullRequestEvent`). | PR locks are released on close *and* merge, have an optional TTL, and can be listed and released from the CLI, UI and MCP. Contract tests cover each VCS's close and merge payloads. |
-| R7 | Atlantis stores no state, has no UI login, and cannot run plans remotely. | Built-in versioned state (HTTP and TFE backends), OIDC login, and remote runners. |
+| R7 | Atlantis stores no state, has only basic auth for its UI, and cannot run plans remotely. | Built-in versioned state (HTTP and TFE backends), OIDC login, and remote runners. |
 | R8 | OTF has no policies, drift schedules or Vault credentials. Terrakube has all three. | Rego policies (§5.5), cron-based drift detection (§5.7), and an OIDC issuer for workload identity plus a native OpenBao/Vault JWT login (§7.4). |
 | R9 | Terrakube's executor clones its extensions repository from GitHub on **every** job. | No per-run network fetches that aren't part of the user's config. Engines, git mirrors and the provider cache are cached and checksum-verified. |
-| R10 | OTF's otfd idles at ~24 MiB; Atlantis's Go binary at about the same. | Budget: `cairnd` ≤ 25 MiB idle on aarch64 with SQLite. Each active run adds ≤ 5 MiB to `cairnd`; the tofu child process is counted separately. |
+| R10 | OTF's otfd idles at 13.5 MiB RSS (plus 23 MiB for its Postgres) and Atlantis at 9.8 MiB. Terrakube's stack idles at 2.4 GiB. | Budget: `cairnd` ≤ 8 MiB idle RSS with SQLite, and it starts under a 12 MiB hard limit. Each active run adds ≤ 5 MiB to `cairnd`; the tofu child process is counted separately. |
 
 ## 4. Concepts
 
@@ -684,19 +687,21 @@ regression of more than 10 % fails the release.
 | Metric | OTF (measured) | Terrakube (measured) | Atlantis (measured) | **Cairn budget** |
 |---|---|---|---|---|
 | Processes or containers to run | 2 | 7 | 1 | **1** (+ optional Postgres) |
-| Compressed image, arm64, app only | 33 MiB | 1,364 MiB | 56 MiB | **≤ 20 MiB** (≤ 75 MiB with tofu bundled) |
-| Cold start → healthy (4 vCPU) | {{otf_cold}} | {{tk_cold}} | {{at_cold}} | **≤ 0.2 s** |
-| Cold start, 1-CPU budget | {{otf_cold1}} | {{tk_cold1}} | {{at_cold1}} | **≤ 0.5 s** |
-| Idle RSS, app | {{otf_idle}} | {{tk_idle}} | {{at_idle}} | **≤ 25 MiB** |
-| Idle RSS, whole stack | {{otf_idle_stack}} | {{tk_idle_stack}} | {{at_idle_stack}} | **≤ 25 MiB** (SQLite) |
-| Idle CPU, whole stack | {{otf_idle_cpu}} | {{tk_idle_cpu}} | {{at_idle_cpu}} | **≤ 0.1 % of a core** (no busy timers) |
-| List 50 stacks, 1 client p50 | {{otf_c1}} | {{tk_c1}} | n/a | **≤ 2 ms** |
-| List 50 stacks, 16 clients | {{otf_rps}} | {{tk_rps}} | n/a | **≥ 5,000 req/s, p99 ≤ 20 ms** |
-| Run → applied (100 resources; tofu itself ≈ {{tofu_base}}) | {{otf_run}} | {{tk_run}} | {{at_run}} | **≤ tofu + 0.3 s** |
-| No-op run | {{otf_noop}} | {{tk_noop}} | n/a | **≤ tofu + 0.3 s** |
-| 5 runs at once, wall time | {{otf_par}} | {{tk_par}} | {{at_par}} | **≤ 1.5 × one run** on ≥ 4 cores |
-| Peak RSS, 5 runs at once (stack, incl. tofu) | {{otf_par_rss}} | {{tk_par_rss}} | {{at_par_rss}} | **≤ 60 MiB + 5 × tofu** |
-| PR opened → plan feedback on the PR | n/a | n/a | {{at_pr}} | **≤ tofu + 1 s** |
+| Compressed image, arm64, app only | 33 MiB | 1,362 MiB | 56 MiB | **≤ 20 MiB** (≤ 75 MiB with tofu bundled) |
+| Cold start → healthy (4 vCPU) | 0.7 s | 25.6 s | 0.24 s | **≤ 0.1 s** |
+| Cold start, 1-CPU budget | 0.64 s | 94.4 s | 0.26 s | **≤ 0.2 s** |
+| Idle RSS, app | 13 MiB | 2,382 MiB | 10 MiB | **≤ 8 MiB** |
+| Smallest hard memory limit it starts in | 16 MiB | 3,328 MiB (3 JVMs) | 16 MiB | **≤ 12 MiB** |
+| Idle RSS, whole stack | 36 MiB | 2,405 MiB | 10 MiB | **≤ 8 MiB** (SQLite) |
+| Idle CPU, whole stack | 0.33 % | 1.7 % | 0.04 % | **≤ 0.02 % of a core** (no timer faster than 30 s) |
+| List 50 stacks, 1 client p50 | 152 ms | 99 ms | n/a | **≤ 2 ms** |
+| List 50 stacks, 16 clients | 18 req/s, p99 1.0 s | 31 req/s, p99 0.8 s | n/a | **≥ 5,000 req/s, p99 ≤ 20 ms** |
+| Run → applied (100 resources; tofu init+plan+apply ≈ 0.17 s) | 0.44 s | 27.0 s | 0.57 s | **≤ tofu + 0.1 s** (≈ 0.27 s) |
+| Same, 1-CPU budget | 0.78 s | 28.9 s | 0.72 s | **≤ tofu + 0.5 s** |
+| No-op run (tofu init+plan ≈ 0.10 s) | 0.24 s | 10.6 s | n/a | **≤ tofu + 0.1 s** (≈ 0.20 s) |
+| 5 runs at once, wall time | 1.01 s | 146.5 s | 1.09 s | **≤ 1.5 × one run** on ≥ 4 cores |
+| Peak RSS, 5 runs at once (stack, incl. tofu) | 154 MiB | 2,559 MiB | 103 MiB | **≤ 90 MiB** |
+| PR opened → plan feedback on the PR | n/a | n/a | 1.6 s | **≤ tofu + 0.5 s** (Gitea round trips included) |
 
 Engineering rules that keep these budgets:
 
@@ -751,7 +756,7 @@ Engineering rules that keep these budgets:
 | OpenBao | JWT-auth dynamic credentials (§7.4) and the transit engine as the master key (§7.3). |
 | Postgres already running | Optional backend. SQLite also works if the Pi shouldn't carry more connections. |
 | Runs on mediabox | `cairnd runner --pool mediabox` connects outbound to the Pi. |
-| Pi already in swap | ≤ 25 MiB idle, one process, no JVM (§9). |
+| Pi already in swap | ≤ 8 MiB idle, one process, no JVM (§9). |
 
 ## 12. Implementation plan (Rust)
 
@@ -823,7 +828,7 @@ cairn/
 
 | Milestone | Contents | Exit criterion |
 |---|---|---|
-| **M0: skeleton** (2 wk) | Workspace and crates, config, SQLite store, migrations, native API for spaces and stacks, CLI login (local token), `/healthz`, CI, release pipeline | `cairnd` starts in < 100 ms; `cairn stack list` works |
+| **M0: skeleton** (2 wk) | Workspace and crates, config, SQLite store, migrations, native API for spaces and stacks, CLI login (local token), `/healthz`, CI, release pipeline, `bench/cairn` driver | `cairnd` starts in ≤ 0.1 s and idles at ≤ 8 MiB; `cairn stack list` works |
 | **M1: replace TFC for this repo** (6 wk) | TFE API phase 1, the state backend, the embedded runner, engine manager, tracked and proposed runs, Forgejo integration (push → run, PR → proposed run with status and summary comment), OIDC login (Authentik) with group mapping, SSE logs, minimal UI, CLI `stack preview/deploy/confirm/logs/outputs/state`, read-only MCP tools over stdio | `tf-github-config` runs on Cairn by changing only `cloud { hostname }`; §9 budgets met for cold start, idle and run overhead |
 | **M2: Spacelift workflow** (6 wk) | Contexts (with auto-attach), Rego policies (plan, approval, push), drift schedules, locks (R6), comment commands, the write-scoped MCP tools with elicitation, MCP over HTTP with OAuth, Postgres backend, `.cairn/config.yml` | A PR on Forgejo produces plans, policy verdicts and drift reports; Claude Code can preview and request an apply that a human confirms |
 | **M3: scale-out and credentials** (6 wk) | Remote runners and pools, workload-identity issuer plus AWS/GCP/Azure/OpenBao integrations, dependencies with output mapping, module and provider registry, notifications, audit log, OpenTofu provider v0 | A runner on mediabox applies with OpenBao-issued credentials; a change to stack A triggers B with mapped outputs |
@@ -872,5 +877,5 @@ For this repository, the result is a one-line change in `terraform.tf`.
 | Contexts / variable sets | variable sets | global variables | ✘ | ✔ (auto-attach) | ✔ (auto-attach) |
 | Private registry | modules | modules + providers | ✘ | modules + providers | modules + providers + network mirror |
 | CLI | `otf` (admin) | ✘ | ✘ | `spacectl` | `cairn` (spacectl-class) |
-| MCP | ✘ | ✘ | ✘ | stdio via spacectl (36 tools, no annotations) | stdio + HTTP/OAuth, annotations, elicitation, resources, prompts |
-| Run overhead (100 resources) | ~0.4 s | ~27 s | ~0.4 s | n/a | ≤ 0.3 s |
+| MCP | ✘ | ✘ | ✘ | stdio via `spacectl mcp server`: 37 tools, 22 marked read-only, none marked destructive (not even `confirm_stack_run`), no elicitation or resources | stdio + HTTP/OAuth, destructive/idempotent hints, elicitation-gated applies, resources and subscriptions, prompts |
+| Run overhead over tofu (100 resources) | ~0.27 s | ~27 s | ~0.4 s | n/a | ≤ 0.1 s |

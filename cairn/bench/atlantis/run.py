@@ -118,8 +118,8 @@ def pr_flow(i):
     t_apply = wait_comment(number, "Ran Apply")
     # Merge rather than close: Atlantis' Gitea parser only treats *merged* PRs as
     # closed (ParseGiteaPullRequestEvent); a closed-unmerged PR keeps its locks.
-    t2 = time.monotonic()
     vcs.merge_pr(REPO, number)
+    t2 = time.monotonic()
     t_unlock = wait_unlocked()
     return {"pr_open_to_plan_comment_s": t_plan - t0, "apply_comment_to_result_s": t_apply - t1,
             "merge_to_locks_released_s": t_unlock - t2}

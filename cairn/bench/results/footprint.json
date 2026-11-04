@@ -1,0 +1,36 @@
+{
+  "atlantis": {
+    "version": "v0.49.0",
+    "loc": {
+      "Go": 41517,
+      "TypeScript": 490,
+      "JavaScript": 122
+    },
+    "go_direct": 59,
+    "go_indirect": 100,
+    "npm_declared": 11
+  },
+  "otf": {
+    "version": "v0.6.3",
+    "loc": {
+      "Go": 45667,
+      "templ": 4763,
+      "SQL": 3151,
+      "JavaScript": 1371
+    },
+    "go_direct": 55,
+    "go_indirect": 136,
+    "npm_declared": 0
+  },
+  "terrakube": {
+    "version": "2.33.3",
+    "loc": {
+      "Java": 35860,
+      "TypeScript": 31364,
+      "JavaScript": 111,
+      "SQL": 10
+    },
+    "maven_declared": 125,
+    "npm_declared": 70
+  }
+}

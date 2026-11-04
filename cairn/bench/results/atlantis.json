@@ -1,0 +1,270 @@
+{
+  "tool": "atlantis",
+  "version": "v0.49.0",
+  "images": {
+    "cairn-bench/atlantis:v0.49.0": 358144382
+  },
+  "image_note": "locally built (see atlantis/Dockerfile); upstream ghcr.io sizes in image-sizes.jsonl",
+  "cold_start": {
+    "healthz_s": 0.24,
+    "poll_s": 0.1
+  },
+  "api_load": {
+    "c1": {
+      "requests": 320,
+      "concurrency": 1,
+      "status": {
+        "200": 320
+      },
+      "max_ms": 1.6,
+      "avg_ms": 0.1,
+      "rps": 7219.9,
+      "p50_ms": 0.1,
+      "p95_ms": 0.2,
+      "p99_ms": 0.5
+    },
+    "c16": {
+      "requests": 3200,
+      "concurrency": 16,
+      "status": {
+        "200": 3200
+      },
+      "max_ms": 8.7,
+      "avg_ms": 0.4,
+      "rps": 34521.1,
+      "p50_ms": 0.2,
+      "p95_ms": 1.5,
+      "p99_ms": 3.0
+    },
+    "endpoint": "GET /api/locks (only authenticated read API; no inventory to list)"
+  },
+  "first_run": {
+    "status": "ok",
+    "total_s": 0.6597235160006676,
+    "detail": null
+  },
+  "e2e_serial": {
+    "create_to_planned_s": {
+      "n": 5,
+      "min": 0.31,
+      "median": 0.33,
+      "max": 0.34,
+      "mean": 0.33
+    },
+    "create_to_applied_s": {
+      "n": 5,
+      "min": 0.56,
+      "median": 0.57,
+      "max": 0.58,
+      "mean": 0.57
+    },
+    "total_s": {
+      "n": 5,
+      "min": 0.56,
+      "median": 0.57,
+      "max": 0.58,
+      "mean": 0.57
+    },
+    "statuses": [
+      "ok",
+      "ok",
+      "ok",
+      "ok",
+      "ok"
+    ],
+    "plan_statuses": [
+      "ok",
+      "ok",
+      "ok",
+      "ok",
+      "ok"
+    ],
+    "errors": []
+  },
+  "e2e_parallel": {
+    "runs": 5,
+    "wall_s": 1.09,
+    "per_run_total_s": {
+      "n": 5,
+      "min": 0.97,
+      "median": 1.08,
+      "max": 1.09,
+      "mean": 1.05
+    },
+    "statuses": [
+      "ok",
+      "ok",
+      "ok",
+      "ok",
+      "ok"
+    ],
+    "errors": []
+  },
+  "pr_workflow": {
+    "pr_open_to_plan_comment_s": {
+      "n": 3,
+      "min": 0.89,
+      "median": 1.62,
+      "max": 2.75,
+      "mean": 1.75
+    },
+    "apply_comment_to_result_s": {
+      "n": 3,
+      "min": 0.79,
+      "median": 0.8,
+      "max": 0.8,
+      "mean": 0.8
+    },
+    "merge_to_locks_released_s": {
+      "n": 3,
+      "min": 0.2,
+      "median": 0.2,
+      "max": 0.4,
+      "mean": 0.27
+    }
+  },
+  "resources": {
+    "idle": {
+      "atlantis": {
+        "samples": 299,
+        "window_s": 59.7,
+        "rss_mib_avg": 9.8,
+        "rss_mib_max": 10.4,
+        "ws_mib_avg": 10.7,
+        "ws_mib_max": 11.5,
+        "cpu_s": 0.02,
+        "cpu_pct_avg": 0.04
+      },
+      "_total": {
+        "rss_mib_avg": 9.8,
+        "rss_mib_max": 10.4,
+        "ws_mib_avg": 10.7,
+        "ws_mib_max": 11.5,
+        "cpu_s": 0.0
+      }
+    },
+    "api_load": {
+      "atlantis": {
+        "samples": 1,
+        "window_s": 0.0,
+        "rss_mib_avg": 10.4,
+        "rss_mib_max": 10.4,
+        "ws_mib_avg": 11.5,
+        "ws_mib_max": 11.5,
+        "cpu_s": 0.0,
+        "cpu_pct_avg": null
+      },
+      "_total": {
+        "rss_mib_avg": 10.4,
+        "rss_mib_max": 10.4,
+        "ws_mib_avg": 11.5,
+        "ws_mib_max": 11.5,
+        "cpu_s": 0.0
+      }
+    },
+    "e2e_plans": {
+      "atlantis": {
+        "samples": 9,
+        "window_s": 1.6,
+        "rss_mib_avg": 19.8,
+        "rss_mib_max": 34.8,
+        "ws_mib_avg": 21.6,
+        "ws_mib_max": 36.9,
+        "cpu_s": 1.92,
+        "cpu_pct_avg": 119.87
+      },
+      "_total": {
+        "rss_mib_avg": 19.8,
+        "rss_mib_max": 34.8,
+        "ws_mib_avg": 21.6,
+        "ws_mib_max": 36.9,
+        "cpu_s": 1.9
+      }
+    },
+    "e2e_serial": {
+      "atlantis": {
+        "samples": 14,
+        "window_s": 2.6,
+        "rss_mib_avg": 20.7,
+        "rss_mib_max": 37.1,
+        "ws_mib_avg": 22.7,
+        "ws_mib_max": 39.3,
+        "cpu_s": 3.04,
+        "cpu_pct_avg": 116.83
+      },
+      "_total": {
+        "rss_mib_avg": 20.7,
+        "rss_mib_max": 37.1,
+        "ws_mib_avg": 22.7,
+        "ws_mib_max": 39.3,
+        "cpu_s": 3.0
+      }
+    },
+    "e2e_parallel": {
+      "atlantis": {
+        "samples": 5,
+        "window_s": 0.8,
+        "rss_mib_avg": 57.3,
+        "rss_mib_max": 103.2,
+        "ws_mib_avg": 62.0,
+        "ws_mib_max": 108.7,
+        "cpu_s": 2.41,
+        "cpu_pct_avg": 300.31
+      },
+      "_total": {
+        "rss_mib_avg": 57.3,
+        "rss_mib_max": 103.2,
+        "ws_mib_avg": 62.0,
+        "ws_mib_max": 108.7,
+        "cpu_s": 2.4
+      }
+    },
+    "pr_workflow": {
+      "atlantis": {
+        "samples": 55,
+        "window_s": 10.8,
+        "rss_mib_avg": 18.2,
+        "rss_mib_max": 47.5,
+        "ws_mib_avg": 20.3,
+        "ws_mib_max": 50.2,
+        "cpu_s": 1.93,
+        "cpu_pct_avg": 17.87
+      },
+      "_total": {
+        "rss_mib_avg": 18.2,
+        "rss_mib_max": 47.5,
+        "ws_mib_avg": 20.3,
+        "ws_mib_max": 50.2,
+        "cpu_s": 1.9
+      }
+    },
+    "whole_run": {
+      "atlantis": {
+        "samples": 538,
+        "window_s": 107.6,
+        "rss_mib_avg": 11.4,
+        "rss_mib_max": 103.2,
+        "ws_mib_avg": 12.6,
+        "ws_mib_max": 108.7,
+        "cpu_s": 11.01,
+        "cpu_pct_avg": 10.23
+      },
+      "_total": {
+        "rss_mib_avg": 11.4,
+        "rss_mib_max": 103.2,
+        "ws_mib_avg": 12.6,
+        "ws_mib_max": 108.7,
+        "cpu_s": 11.0
+      }
+    }
+  },
+  "host": {
+    "cpus": 4,
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "mem_mib": 16091,
+    "kernel": "6.18.44-fc-v233",
+    "arch": "x86_64",
+    "date": "2026-11-04T05:30:20Z"
+  },
+  "constraint": null
+}

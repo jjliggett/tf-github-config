@@ -132,7 +132,14 @@ def add_webhook(repo, url, secret, events):
     assert s in (200, 201), (s, b)
 
 
-def merge_pr(repo, number):
-    s, b = api("POST", f"/repos/{USER}/{repo}/pulls/{number}/merge",
-               {"Do": "merge", "delete_branch_after_merge": True})
-    assert s in (200, 204), (s, b)
+def merge_pr(repo, number, timeout=60):
+    # Gitea answers 405 "Please try again later" until its async mergeability check is done.
+    t0 = time.monotonic()
+    while True:
+        s, b = api("POST", f"/repos/{USER}/{repo}/pulls/{number}/merge",
+                   {"Do": "merge", "delete_branch_after_merge": True})
+        if s in (200, 204):
+            return
+        if s != 405 or time.monotonic() - t0 > timeout:
+            raise AssertionError((s, b))
+        time.sleep(0.5)

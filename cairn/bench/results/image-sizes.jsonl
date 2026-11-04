@@ -1,0 +1,10 @@
+{"image": "leg100/otfd:0.6.3", "amd64_compressed_bytes": 36543724, "amd64_layers": 4, "arm64_compressed_bytes": 35027163, "arm64_layers": 4}
+{"image": "leg100/otf-agent:0.6.3", "amd64_compressed_bytes": 29121281, "amd64_layers": 4, "arm64_compressed_bytes": 28221546, "arm64_layers": 4}
+{"image": "ghcr.io/runatlantis/atlantis:v0.49.0", "arm64_compressed_bytes": 58430564, "arm64_layers": 8, "amd64_compressed_bytes": 62501585, "amd64_layers": 8}
+{"image": "azbuilder/api-server:2.33.3", "amd64_compressed_bytes": 351082746, "amd64_layers": 22, "arm64_compressed_bytes": 496123829, "arm64_layers": 21}
+{"image": "azbuilder/executor:2.33.3", "amd64_compressed_bytes": 378164051, "amd64_layers": 24, "arm64_compressed_bytes": 470078329, "arm64_layers": 22}
+{"image": "azbuilder/open-registry:2.33.3", "amd64_compressed_bytes": 254231342, "amd64_layers": 22, "arm64_compressed_bytes": 399272598, "arm64_layers": 21}
+{"image": "azbuilder/terrakube-ui:2.33.3", "amd64_compressed_bytes": 64339685, "amd64_layers": 12, "arm64_compressed_bytes": 62866369, "arm64_layers": 12}
+{"image": "dexidp/dex:v2.43.1", "amd64_compressed_bytes": 43555838, "amd64_layers": 10, "arm64_compressed_bytes": 40800057, "arm64_layers": 10}
+{"image": "valkey/valkey:8-alpine", "amd64_compressed_bytes": 17497567, "amd64_layers": 7, "arm64_compressed_bytes": 17940045, "arm64_layers": 7}
+{"image": "postgres:16-alpine", "amd64_compressed_bytes": 116064374, "amd64_layers": 11, "arm64_compressed_bytes": 113883909, "arm64_layers": 11}

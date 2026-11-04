@@ -1,0 +1,197 @@
+{
+  "note": "Smallest hard memory limit (no swap) under which each app service starts.",
+  "otf": {
+    "otfd": {
+      "floor_mib": 16,
+      "attempts": [
+        {
+          "limit_mib": 12,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "true 137"
+        },
+        {
+          "limit_mib": 16,
+          "ok": true,
+          "ready_s": 0.24,
+          "rss_mib": 13.1,
+          "state": null
+        }
+      ]
+    }
+  },
+  "terrakube": {
+    "api": {
+      "floor_mib": 1536,
+      "attempts": [
+        {
+          "limit_mib": 256,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "false 82"
+        },
+        {
+          "limit_mib": 384,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "false 82"
+        },
+        {
+          "limit_mib": 512,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "false 82"
+        },
+        {
+          "limit_mib": 640,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "false 82"
+        },
+        {
+          "limit_mib": 768,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "false 82"
+        },
+        {
+          "limit_mib": 1024,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "false 3"
+        },
+        {
+          "limit_mib": 1536,
+          "ok": true,
+          "ready_s": 18.5,
+          "rss_mib": 1029.0,
+          "state": null
+        }
+      ]
+    },
+    "executor": {
+      "floor_mib": 1024,
+      "attempts": [
+        {
+          "limit_mib": 256,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "false 82"
+        },
+        {
+          "limit_mib": 384,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "false 82"
+        },
+        {
+          "limit_mib": 512,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "false 82"
+        },
+        {
+          "limit_mib": 640,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "false 82"
+        },
+        {
+          "limit_mib": 768,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "false 3"
+        },
+        {
+          "limit_mib": 1024,
+          "ok": true,
+          "ready_s": 5.14,
+          "rss_mib": 266.3,
+          "state": null
+        }
+      ]
+    },
+    "registry": {
+      "floor_mib": 768,
+      "attempts": [
+        {
+          "limit_mib": 256,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "false 82"
+        },
+        {
+          "limit_mib": 384,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "false 82"
+        },
+        {
+          "limit_mib": 512,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "false 82"
+        },
+        {
+          "limit_mib": 640,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "false 82"
+        },
+        {
+          "limit_mib": 768,
+          "ok": true,
+          "ready_s": 4.25,
+          "rss_mib": 221.0,
+          "state": null
+        }
+      ]
+    }
+  },
+  "atlantis": {
+    "atlantis": {
+      "floor_mib": 16,
+      "attempts": [
+        {
+          "limit_mib": 12,
+          "ok": false,
+          "ready_s": null,
+          "rss_mib": null,
+          "state": "true 137"
+        },
+        {
+          "limit_mib": 16,
+          "ok": true,
+          "ready_s": 0.25,
+          "rss_mib": 9.3,
+          "state": null
+        }
+      ]
+    }
+  },
+  "host": {
+    "cpus": 4,
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "mem_mib": 16091,
+    "kernel": "6.18.44-fc-v233",
+    "arch": "x86_64",
+    "date": "2026-11-04T05:34:42Z"
+  },
+  "constraint": null
+}

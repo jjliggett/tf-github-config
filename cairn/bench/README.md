@@ -24,7 +24,8 @@ already pulled. The driver then runs the same phases for each tool:
 
 The fixture (`fixtures/tofu-bench`) is 100 `terraform_data` resources. It needs
 no providers, so the runs measure the orchestrator and not the network. Plain
-`tofu` needs about 0.08 s to plan and 0.08 s to apply it (`results/baseline.json`).
+`tofu` needs about 0.03 s to init, 0.07 s to plan and 0.07 s to apply it
+(`results/baseline.json`).
 
 Resources are read from **cgroup v1 accounting** (`lib/cgstat.py`) every
 0.2 s, for every container in the stack:
@@ -103,5 +104,24 @@ ONLY=otf CPU_MODES= ./run-all.sh      # just one tool, unconstrained
 ```
 
 Each driver accepts `IDLE_SECONDS`, `N_WORKSPACES`, `SERIAL_RUNS`,
-`PARALLEL_RUNS` (and `PR_RUNS` for Atlantis) for quicker smoke runs, and
-`--keep` to leave the containers running afterwards.
+`PARALLEL_RUNS` (and `PR_RUNS` for Atlantis) for quicker smoke runs,
+`BENCH_API_N` to change the request count (default 3,200; 640 in constrained
+mode), and `--keep` to leave the containers running afterwards.
+
+Two extra experiments aren't part of `run-all.sh`:
+
+```sh
+python3 memory_floor.py      # smallest hard memory limit each app service starts under -> results/memory-floor.json
+python3 otf/query_count.py   # Postgres transactions per OTF API request             -> results/otf-query-count.json
+```
+
+## Result files
+
+| File | Contents |
+|---|---|
+| `<tool>.json`, `<tool>-1cpu.json` | Every phase above, plus per-container resources per phase (`resources.<phase>.<container>`) |
+| `baseline.json` | Plain `tofu` init/plan/apply timings for the fixture |
+| `memory-floor.json` | Every attempted limit per service: ok/OOM/refused, RSS, time to healthy |
+| `otf-query-count.json` | Transactions per request for OTF list and get endpoints |
+| `footprint.json`, `image-sizes.jsonl` | Source lines, declared dependencies and compressed registry sizes per architecture |
+| `SUMMARY.md` | Tables generated from all of the above by `lib/report.py` |
