@@ -1,0 +1,36 @@
+[package]
+name = "cairnd"
+description = "Cairn server: lightweight OpenTofu automation (TFE-compatible API, runner, state)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["download"]
+# Download OpenTofu releases (checksum-verified) when a stack asks for a version
+# that is not cached. Without it, engines must be pre-seeded or on PATH.
+download = ["dep:ureq", "dep:zip"]
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+bytes = "1"
+chacha20poly1305 = "0.10"
+clap = { version = "4", features = ["derive", "env"] }
+flate2 = "1"
+hex = "0.4"
+mimalloc = { version = "0.1", default-features = false }
+rusqlite = { version = "0.41", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tar = "0.4"
+time = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "sync", "time", "signal", "fs", "io-util"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "std"] }
+ureq = { version = "2", optional = true }
+zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
+
+[dev-dependencies]

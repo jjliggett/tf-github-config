@@ -1,0 +1,222 @@
+//! Shared application state, configuration, auth and API errors.
+
+use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+
+use anyhow::Result;
+use axum::http::{header, HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use clap::Parser;
+
+use crate::crypto::SecretBox;
+use crate::db::Db;
+use crate::engine::Engines;
+use crate::events::Hub;
+use crate::runner::Scheduler;
+use crate::util::{ct_eq, sha256_hex};
+
+#[derive(Parser, Debug, Clone)]
+#[command(name = "cairnd", version, about = "Cairn server: lightweight OpenTofu automation")]
+pub struct Config {
+    /// Address to listen on.
+    #[arg(long, env = "CAIRN_LISTEN", default_value = "127.0.0.1:8833")]
+    pub listen: SocketAddr,
+    /// Directory for the database, blobs, logs, engines and run workspaces.
+    #[arg(long, env = "CAIRN_DATA", default_value = "./cairn-data")]
+    pub data: PathBuf,
+    /// Admin token accepted in addition to tokens created via the API.
+    #[arg(long, env = "CAIRN_SITE_TOKEN", hide_env_values = true)]
+    pub site_token: Option<String>,
+    /// Use this OpenTofu binary for every run (otherwise resolve per stack version).
+    #[arg(long, env = "CAIRN_TOFU_BIN")]
+    pub tofu_bin: Option<PathBuf>,
+    /// Engine version for stacks that don't set one.
+    #[arg(long, env = "CAIRN_DEFAULT_ENGINE_VERSION", default_value = "1.11.6")]
+    pub default_engine_version: String,
+    /// Never download engines; they must be in <data>/engines/<version>/tofu.
+    #[arg(long, env = "CAIRN_NO_DOWNLOAD")]
+    pub no_download: bool,
+    /// Maximum plan/apply phases running at once (default: number of CPUs).
+    #[arg(long, env = "CAIRN_CONCURRENCY")]
+    pub concurrency: Option<usize>,
+    /// Public base URL used in links handed to clients (default: from the Host header).
+    #[arg(long, env = "CAIRN_EXTERNAL_URL")]
+    pub external_url: Option<String>,
+    /// Hex 32-byte key for secrets at rest (default: <data>/secret.key).
+    #[arg(long, env = "CAIRN_SECRET_KEY", hide_env_values = true)]
+    pub secret_key: Option<String>,
+    /// Keep run workspaces after runs finish (debugging).
+    #[arg(long, env = "CAIRN_KEEP_WORKSPACES")]
+    pub keep_workspaces: bool,
+    /// Tokio worker threads (default: min(CPUs, 4)).
+    #[arg(long, env = "CAIRN_WORKERS")]
+    pub workers: Option<usize>,
+}
+
+#[derive(Default)]
+pub struct Metrics {
+    pub runs_created: AtomicU64,
+    pub phase_runs: Mutex<HashMap<&'static str, (u64, f64)>>,
+    pub finished: Mutex<HashMap<String, u64>>,
+    pub http_requests: AtomicU64,
+}
+
+impl Metrics {
+    pub fn phase(&self, phase: &'static str, secs: f64) {
+        let mut m = self.phase_runs.lock().unwrap();
+        let e = m.entry(phase).or_default();
+        e.0 += 1;
+        e.1 += secs;
+    }
+    pub fn finished(&self, status: &str) {
+        *self.finished.lock().unwrap().entry(status.to_string()).or_default() += 1;
+    }
+}
+
+pub struct App {
+    pub cfg: Config,
+    pub db: Db,
+    pub hub: Hub,
+    pub engines: Engines,
+    pub secrets: SecretBox,
+    pub sched: Scheduler,
+    pub metrics: Metrics,
+    /// SHA-256 of every valid API token (loaded at start, updated on create).
+    pub tokens: RwLock<HashSet<String>>,
+    /// Key for signing pre-authorized upload URLs (process lifetime).
+    pub url_key: [u8; 32],
+}
+
+pub type AppRef = Arc<App>;
+
+impl App {
+    pub fn dir(&self, sub: &str) -> PathBuf {
+        self.cfg.data.join(sub)
+    }
+
+    pub fn check_token(&self, token: &str) -> bool {
+        if let Some(site) = &self.cfg.site_token {
+            if ct_eq(site.as_bytes(), token.as_bytes()) {
+                return true;
+            }
+        }
+        self.tokens.read().unwrap().contains(&sha256_hex(token.as_bytes()))
+    }
+
+    pub fn sign(&self, what: &str) -> String {
+        let mut m = self.url_key.to_vec();
+        m.extend_from_slice(what.as_bytes());
+        sha256_hex(&m)[..32].to_string()
+    }
+
+    pub fn base_url(&self, headers: &HeaderMap) -> String {
+        if let Some(u) = &self.cfg.external_url {
+            return u.trim_end_matches('/').to_string();
+        }
+        let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("localhost");
+        let proto = headers.get("x-forwarded-proto").and_then(|h| h.to_str().ok()).unwrap_or("http");
+        format!("{proto}://{host}")
+    }
+
+    pub fn count_request(&self) {
+        self.metrics.http_requests.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Extract a bearer token, or the password of HTTP basic auth (what the
+/// OpenTofu `http` backend sends).
+pub fn token_from(headers: &HeaderMap) -> Option<String> {
+    let v = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    if let Some(t) = v.strip_prefix("Bearer ") {
+        return Some(t.trim().to_string());
+    }
+    if let Some(b) = v.strip_prefix("Basic ") {
+        let raw = base64_decode(b.trim())?;
+        let s = String::from_utf8(raw).ok()?;
+        return s.split_once(':').map(|(_, p)| p.to_string());
+    }
+    None
+}
+
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let (mut buf, mut bits) = (0u32, 0u32);
+    for c in s.bytes().filter(|&c| c != b'=') {
+        let v = T.iter().position(|&t| t == c)? as u32;
+        buf = (buf << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
+// ---------------------------------------------------------------- errors
+
+/// `application/problem+json` error (RFC 9457).
+#[derive(Debug)]
+pub struct ApiError {
+    pub status: StatusCode,
+    pub title: String,
+    pub detail: Option<serde_json::Value>,
+}
+
+impl ApiError {
+    pub fn new(status: StatusCode, title: impl Into<String>) -> Self {
+        ApiError { status, title: title.into(), detail: None }
+    }
+    pub fn not_found(what: &str) -> Self {
+        Self::new(StatusCode::NOT_FOUND, format!("{what} not found"))
+    }
+    pub fn bad_request(msg: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, msg)
+    }
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        Self::new(StatusCode::CONFLICT, msg)
+    }
+}
+
+impl From<anyhow::Error> for ApiError {
+    fn from(e: anyhow::Error) -> Self {
+        let msg = format!("{e:#}");
+        if msg.contains("UNIQUE constraint failed") {
+            return ApiError::conflict("already exists");
+        }
+        tracing::error!(error = %msg, "request failed");
+        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, msg)
+    }
+}
+
+impl From<rusqlite::Error> for ApiError {
+    fn from(e: rusqlite::Error) -> Self {
+        anyhow::Error::from(e).into()
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        let mut body = serde_json::json!({
+            "type": format!("https://cairn.dev/errors/{}", self.status.as_u16()),
+            "title": self.title,
+            "status": self.status.as_u16(),
+            // JSON:API-style errors too, so TFE clients print something useful.
+            "errors": [{ "status": self.status.as_u16().to_string(), "title": self.title }],
+        });
+        if let Some(d) = self.detail {
+            body["detail"] = d;
+        }
+        (self.status, [(header::CONTENT_TYPE, "application/problem+json")], body.to_string()).into_response()
+    }
+}
+
+pub type ApiResult<T> = std::result::Result<T, ApiError>;
+
+pub fn load_tokens(db: &Db) -> Result<HashSet<String>> {
+    Ok(db.read(|c| crate::store::token_hashes(c))?.into_iter().collect())
+}
