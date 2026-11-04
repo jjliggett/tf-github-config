@@ -45,14 +45,22 @@ claude mcp add cairn -- cairn mcp serve          # Claude Code; any stdio MCP cl
 cairn mcp serve --read-only                      # inspection tools only
 ```
 
-The tools are `list_stacks`, `get_stack`, `list_runs`, `get_run`,
+Inspection tools: `list_stacks`, `get_stack`, `list_runs`, `get_run`,
 `get_plan_summary`, `get_run_diagnostics`, `get_run_logs`, `get_outputs`,
-`list_state_versions`, `trigger_preview`, `trigger_deploy`, `confirm_run`,
-`discard_run` and `cancel_run`, plus the prompts `review-plan` and
-`triage-failed-run`. Every tool is annotated as read-only, destructive or
-idempotent. Runs started from MCP never auto-apply. `confirm_run` always asks
-the person through MCP elicitation; clients that can't elicit get
-`needs_human` with the `cairn run confirm …` command to run instead.
+`list_state_versions`, `get_run_policies`, `list_policies`,
+`list_dependencies`, `list_schedules` and `search_registry` (module and
+provider source addresses to write code with). Plan-only tools that never
+change infrastructure: `trigger_preview` and `detect_drift`. Tools that can
+lead to changes: `trigger_deploy`, `sync_stack`, `confirm_run`,
+`review_run`, `run_task`, `discard_run` and `cancel_run`. Prompts:
+`review-plan` and `triage-failed-run`.
+
+Every tool is annotated as read-only, destructive or idempotent, and
+`--read-only` hides the ones that can lead to changes. Runs started from MCP
+never auto-apply. A human decides every change: `confirm_run`, approving
+with `review_run`, and any `run_task` that isn't read-only (`state list`,
+`show`, `output`…) ask the person through MCP elicitation; clients that
+can't elicit get `needs_human` with the CLI command a person should run.
 
 ### Using it from OpenTofu directly (HTTP backend)
 
@@ -86,7 +94,7 @@ managed runner picks it up.
 | Policy | Rego (in-process `regorus`): `plan` (deny/warn on `tofu show -json`), `approval` (reviews; reject discards), `login` (deny/admin/space roles), `push` (track/propose/ignore), `task` (deny), `trigger` (add stacks to run after an apply), `notification` (filter and reshape signed webhooks); explicit or label auto-attachment; dry-run endpoint | — |
 | VCS | GitHub, GitLab, Bitbucket Cloud, Azure DevOps, Gitea, Forgejo: verified webhooks, source as commit archives, push → tracked / PR → proposed runs, `/cairn plan` and `/cairn apply` comments, commit statuses and one updating PR comment on all six, PR close/merge stops its runs and frees locks, `push` policies, manual sync | GitHub App auth, Bitbucket Data Center |
 | Registry | Private `modules.v1` and `providers.v1` (namespaces = spaces, RBAC applies), semver ordering, goreleaser-layout provider publishing with GPG-signed SHA256SUMS verified by OpenTofu, pre-signed downloads, run-scoped registry tokens | Publishing modules from VCS tags |
-| CLI / MCP | Login, spaces, stacks, preview/deploy with live logs, runs (review, policies), policies, webhooks, VCS integrations and stack sync, module and provider publishing, destroy/task/drift, schedules, dependencies, variables, state, outputs, raw API; MCP over stdio with a human gate on applies | Repo-aware stack inference, MCP over HTTP with OAuth |
+| CLI / MCP | Login, spaces, stacks, preview/deploy with live logs, runs (review, policies), policies, webhooks, VCS integrations and stack sync, module and provider publishing, destroy/task/drift, schedules, dependencies, variables, state, outputs, raw API; MCP over stdio (23 tools) with a human gate on applies, approvals and state-changing tasks | Repo-aware stack inference, MCP over HTTP with OAuth |
 
 Tests: `cargo test` (unit) and
 `TOFU=$(which tofu) python3 -m unittest discover -s tests -p 'test_*.py'`

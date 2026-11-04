@@ -17,7 +17,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::api::identity::find_space;
-use crate::api::native::{enqueue_run, find_stack, run_view, stop_run, valid_name, SpaceQ};
+use crate::api::native::{enqueue_run, find_stack, run_view, stop_run, valid_name};
 use crate::app::{ApiError, ApiResult, AppRef};
 use crate::auth::{Principal, Role};
 use crate::store::{self, Stack, StackVcs};
@@ -140,9 +140,19 @@ pub struct StackVcsReq {
     pub pr_apply: bool,
 }
 
+#[derive(Deserialize)]
+pub struct SyncQ {
+    space: Option<String>,
+    /// Override the stack's auto-apply (agents pass false).
+    auto_apply: Option<bool>,
+}
+
 /// `POST /stacks/{id}/sync`: a tracked run from the head of the stack's branch.
-pub async fn sync(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, Query(q): Query<SpaceQ>) -> ApiResult<impl IntoResponse> {
-    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Writer)?;
+pub async fn sync(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, Query(q): Query<SyncQ>) -> ApiResult<impl IntoResponse> {
+    let mut s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Writer)?;
+    if let Some(a) = q.auto_apply {
+        s.auto_apply = a;
+    }
     let v = s.vcs.clone().ok_or_else(|| ApiError::bad_request("stack has no VCS source"))?;
     let i = app.db.read(|c| vcs::get(c, &v.integration_id))?.ok_or_else(|| ApiError::not_found("VCS integration"))?;
     let source = json!({"integration": i.id, "repo": v.repo, "branch": v.branch, "sha": null, "pr": null});
