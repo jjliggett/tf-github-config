@@ -4,6 +4,7 @@ pub mod identity;
 pub mod native;
 pub mod policies;
 pub mod tfe;
+pub mod vcs;
 
 use axum::extract::{DefaultBodyLimit, Request, State};
 use axum::http::StatusCode;
@@ -20,6 +21,8 @@ fn is_public(path: &str) -> bool {
         | "/auth/login" | "/auth/callback" | "/auth/config")
         // Pre-signed (checked in the handler).
         || (path.starts_with("/api/v2/configuration-versions/") && path.ends_with("/upload"))
+        // Verified by provider signature in the handler.
+        || path.starts_with("/webhooks/vcs/")
 }
 
 async fn auth(State(app): State<AppRef>, mut req: Request, next: Next) -> Response {
@@ -68,6 +71,9 @@ pub fn router(app: AppRef) -> Router {
         .route("/stacks/{id}/policies", get(policies::stack_policies))
         .route("/runs/{id}/policies", get(policies::run_policies))
         .route("/runs/{id}/reviews", post(policies::review))
+        .route("/vcs", get(vcs::list).post(vcs::create))
+        .route("/vcs/{id}", get(vcs::get).delete(vcs::delete))
+        .route("/stacks/{id}/sync", post(vcs::sync))
         .route("/spaces/{space}/webhooks", get(policies::list_webhooks).post(policies::create_webhook))
         .route("/spaces/{space}/webhooks/{id}", axum::routing::delete(policies::delete_webhook))
         .route("/audit", get(identity::audit))
@@ -122,6 +128,7 @@ pub fn router(app: AppRef) -> Router {
         .route("/.well-known/terraform.json", get(tfe::well_known))
         .route("/auth/config", get(identity::auth_config))
         .route("/auth/login", get(identity::login))
+        .route("/webhooks/vcs/{id}", post(vcs::webhook))
         .route("/auth/callback", get(identity::callback))
         .nest("/api/v1", v1)
         .nest("/api/v2", v2)

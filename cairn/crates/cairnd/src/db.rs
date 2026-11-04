@@ -183,6 +183,34 @@ const MIGRATIONS: &[&str] = &[
         created_at TEXT NOT NULL
     );
     "#,
+    // 4: VCS integrations
+    r#"
+    CREATE TABLE vcs_integrations (
+        id         TEXT PRIMARY KEY,
+        space_id   TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+        provider   TEXT NOT NULL,
+        name       TEXT NOT NULL UNIQUE,
+        api_url    TEXT NOT NULL,
+        web_url    TEXT NOT NULL DEFAULT '',
+        username   TEXT NOT NULL DEFAULT '',
+        token      TEXT NOT NULL,
+        secret     TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    ALTER TABLE stacks ADD COLUMN vcs_id TEXT REFERENCES vcs_integrations(id) ON DELETE SET NULL;
+    ALTER TABLE stacks ADD COLUMN repo TEXT;
+    ALTER TABLE stacks ADD COLUMN branch TEXT;
+    ALTER TABLE stacks ADD COLUMN pr_apply INTEGER NOT NULL DEFAULT 0;
+    CREATE INDEX stacks_by_repo ON stacks (vcs_id, repo);
+    ALTER TABLE runs ADD COLUMN source TEXT;
+    CREATE TABLE vcs_comments (
+        vcs_id     TEXT NOT NULL,
+        repo       TEXT NOT NULL,
+        pr         INTEGER NOT NULL,
+        comment_id TEXT NOT NULL,
+        PRIMARY KEY (vcs_id, repo, pr)
+    );
+    "#,
 ];
 
 pub struct Db {

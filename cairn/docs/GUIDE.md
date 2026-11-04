@@ -175,3 +175,67 @@ returns is sent, so they filter and reshape payloads (for example into a
 Matrix, ntfy or Slack message). URLs that resolve to private or loopback
 addresses are refused unless cairnd runs with `--allow-private-webhooks`
 (needed for homelab receivers on the LAN).
+
+## VCS integrations
+
+Cairn takes code straight from GitHub, GitLab, Bitbucket Cloud, Azure
+DevOps, Gitea or Forgejo. Each event fetches an archive of the exact commit
+over the provider's API (no `git` binary, no clones kept on disk), so a run
+plans precisely what was pushed.
+
+| Provider | `--provider` | `--url` | Token needs | Webhook authenticity |
+|---|---|---|---|---|
+| GitHub / GHES | `github` | default `https://api.github.com`; GHES: `https://ghe.example.com/api/v3` | contents read, commit statuses write, pull requests / issues write | `X-Hub-Signature-256` HMAC |
+| GitLab | `gitlab` | default `https://gitlab.com/api/v4` | `api` scope (or `read_repository` + statuses) | `X-Gitlab-Token` |
+| Bitbucket Cloud | `bitbucket` | default `https://api.bitbucket.org/2.0` | repository read, pull requests write (use `--username` with an app password / API token, or a workspace access token alone) | `X-Hub-Signature` HMAC |
+| Azure DevOps | `azure_devops` | `https://dev.azure.com/<org>` | Code (read & status), pull request threads | service hook basic auth (password = secret) |
+| Gitea | `gitea` | the server, e.g. `https://git.example.com` | `repository` read/write | `X-Gitea-Signature` HMAC |
+| Forgejo | `forgejo` | the server, e.g. `https://codeberg.org` | `repository` read/write | `X-Forgejo-Signature` HMAC |
+
+```sh
+cairn vcs create forgejo --provider forgejo --url https://git.lan --access-token "$TOKEN" --space platform
+#   prints the webhook URL and secret: add them to the repository (push, pull request and comment events)
+cairn stack create network --space prod --vcs forgejo --repo infra/network --branch main --auto-apply
+cairn stack sync -s network --space prod -f      # tracked run from the branch head, now
+```
+
+An integration lives in a space; stacks in that space and below can use it.
+Azure DevOps repositories are written `project/repo`.
+
+**What triggers what** (defaults, which `push` policies can override):
+
+| Event | Default |
+|---|---|
+| Push to the stack's branch touching its project root | tracked run (applies when the stack auto-applies) |
+| Push to another branch | ignored |
+| Pull request opened or updated against the stack's branch | proposed run; older unfinished runs of that PR are stopped |
+| `/cairn plan [stack…]` comment on a pull request | proposed run on the PR head |
+| `/cairn apply [stack…]` comment | tracked, auto-applied run on the PR head — only for stacks created with `--pr-apply` (approval policies still apply) |
+| Pull request closed or merged | its queued runs are canceled and planned runs discarded, releasing their stack locks |
+
+The last row is the fix for Atlantis's lock leak: no lock can outlive the
+pull request that took it.
+
+**Reporting.** Every run from VCS sets a commit status named
+`cairn/<space>/<stack>` (pending → success/failure, with the plan summary)
+and keeps **one** comment per pull request up to date: a table with the
+latest run of every stack the PR touched, its changes and errors.
+Set `--external-url` so the links in statuses and comments point at your
+Cairn.
+
+**Push policies** receive `input.push` (`branch`, `sha`, `message`,
+`author`, `affected_files`), `input.pull_request` (`number`, `head_sha`,
+`head_branch`, `base_branch`, `title`, `author`) or `input.comment`
+(`body`, `author`, `command`), plus `input.stack` (with `repo` and
+`branch`). They answer `track`, `propose` or `ignore`; when any push policy
+applies to a stack, the defaults above are off.
+
+```rego
+package cairn
+import rego.v1
+
+track if input.push.branch == input.stack.branch
+propose if { input.push; input.push.branch != input.stack.branch }   # preview every branch
+propose if input.pull_request
+ignore if contains(input.push.message, "[skip cairn]")
+```

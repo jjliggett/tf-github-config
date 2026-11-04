@@ -169,6 +169,9 @@ pub struct NewStackReq {
     project_root: String,
     #[serde(default)]
     labels: Vec<String>,
+    /// VCS source: `{integration, repo, branch, pr_apply}`.
+    #[serde(default)]
+    vcs: Option<crate::api::vcs::StackVcsReq>,
 }
 
 pub async fn create_stack(State(app): State<AppRef>, p: Principal, Json(r): Json<NewStackReq>) -> ApiResult<impl IntoResponse> {
@@ -185,8 +188,9 @@ pub async fn create_stack(State(app): State<AppRef>, p: Principal, Json(r): Json
         None => return Err(ApiError::not_found("space")),
     };
     app.authz.require(&p, &space.id, Role::Admin)?;
+    let vcs = r.vcs.as_ref().map(|v| crate::api::vcs::resolve_stack_vcs(&app, &space.id, v)).transpose()?;
     let id = app.db.write(|c| {
-        store::create_stack(
+        let id = store::create_stack(
             c,
             &store::NewStack {
                 space_id: &space.id,
@@ -197,7 +201,11 @@ pub async fn create_stack(State(app): State<AppRef>, p: Principal, Json(r): Json
                 project_root: &r.project_root,
                 labels: &r.labels,
             },
-        )
+        )?;
+        if let Some(v) = &vcs {
+            store::set_stack_vcs(c, &id, Some(v))?;
+        }
+        Ok(id)
     })?;
     let s = find_stack(&app, &p, &id, None, Role::Reader)?;
     Ok((StatusCode::CREATED, Json(s)))
@@ -216,6 +224,13 @@ pub struct PatchStackReq {
     auto_apply: Option<bool>,
     project_root: Option<String>,
     labels: Option<Vec<String>>,
+    /// `null` removes the VCS source.
+    #[serde(default, deserialize_with = "vcs_patch")]
+    vcs: Option<Option<crate::api::vcs::StackVcsReq>>,
+}
+
+fn vcs_patch<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<crate::api::vcs::StackVcsReq>>, D::Error> {
+    Ok(Some(Option::deserialize(d)?))
 }
 
 mod double_option {
@@ -235,7 +250,15 @@ pub async fn patch_stack(
     if let Some(n) = &patch.name {
         valid_name(n)?;
     }
+    let vcs = match &patch.vcs {
+        Some(Some(v)) => Some(Some(crate::api::vcs::resolve_stack_vcs(&app, &s.space_id, v)?)),
+        Some(None) => Some(None),
+        None => None,
+    };
     app.db.write(|c| {
+        if let Some(v) = &vcs {
+            store::set_stack_vcs(c, &s.id, v.as_ref())?;
+        }
         store::update_stack(
             c,
             &s.id,
@@ -408,11 +431,14 @@ pub async fn save_config(app: &AppRef, cv_id: &str, body: &Bytes) -> ApiResult<(
     Ok(())
 }
 
-pub fn enqueue_run(app: &AppRef, stack: &Stack, kind: &str, config_id: &str, auto_apply: bool, message: &str, by: &str) -> ApiResult<Run> {
+#[allow(clippy::too_many_arguments)]
+pub fn enqueue_run(
+    app: &AppRef, stack: &Stack, kind: &str, config_id: &str, auto_apply: bool, message: &str, by: &str, source: Option<&Value>,
+) -> ApiResult<Run> {
     let run = app.db.write(|c| {
         store::create_run(
             c,
-            &store::NewRun { stack_id: &stack.id, kind, config_id: Some(config_id), auto_apply, message, triggered_by: by },
+            &store::NewRun { stack_id: &stack.id, kind, config_id: Some(config_id), auto_apply, message, triggered_by: by, source },
         )
     })?;
     app.metrics.runs_created.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -493,11 +519,11 @@ pub async fn create_run(
         return Err(ApiError::bad_request("configuration is not uploaded for this stack"));
     }
     let auto = req.auto_apply.unwrap_or(s.auto_apply);
-    let run = enqueue_run(&app, &s, kind, &cv.id, auto, &req.message, &p.label())?;
+    let run = enqueue_run(&app, &s, kind, &cv.id, auto, &req.message, &p.label(), None)?;
     Ok((StatusCode::CREATED, Json(run_view(run))))
 }
 
-fn latest_config(app: &AppRef, s: &Stack) -> ApiResult<String> {
+pub fn latest_config(app: &AppRef, s: &Stack) -> ApiResult<String> {
     let r: Option<String> = app.db.read(|c| {
         Ok(c.query_row(
             "SELECT id FROM config_versions WHERE stack_id = ?1 AND status = 'uploaded' ORDER BY rowid DESC LIMIT 1",
@@ -597,7 +623,16 @@ pub async fn cancel_run(State(app): State<AppRef>, p: Principal, Path(id): Path<
     if run.kind != "proposed" {
         authorized_run(&app, &p, &id, Role::Writer)?;
     }
-    // Not started yet: cancel directly. Executing: signal the runner.
+    if !stop_run(&app, &run, false)? {
+        return Err(ApiError::conflict(format!("run is {}, nothing to cancel", run.status)));
+    }
+    Ok(Json(run_view(find_run(&app, &id)?)))
+}
+
+/// Stop a run wherever it is: queued runs are canceled directly, executing
+/// runs are signalled, and (with `discard_planned`) planned runs are
+/// discarded. Returns false if the run had already finished.
+pub fn stop_run(app: &AppRef, run: &Run, discard_planned: bool) -> anyhow::Result<bool> {
     let queued = app.db.write(|c| {
         let ok = store::transition(c, &run.id, &["plan_queued", "apply_queued"], "canceled")?;
         if ok {
@@ -606,13 +641,30 @@ pub async fn cancel_run(State(app): State<AppRef>, p: Principal, Path(id): Path<
         Ok(ok)
     })?;
     if queued {
-        runner::cleanup(&app, &run.id);
-        runner::publish(&app, &run.stack_id, &run.id, "canceled");
+        runner::cleanup(app, &run.id);
+        runner::publish(app, &run.stack_id, &run.id, "canceled");
         app.sched.kick();
-    } else if !app.sched.cancel(&run.id) {
-        return Err(ApiError::conflict(format!("run is {}, nothing to cancel", run.status)));
+        return Ok(true);
     }
-    Ok(Json(run_view(find_run(&app, &id)?)))
+    if app.sched.cancel(&run.id) {
+        return Ok(true);
+    }
+    if discard_planned {
+        let ok = app.db.write(|c| {
+            let ok = store::transition(c, &run.id, &["planned"], "discarded")?;
+            if ok {
+                store::unlock_stack(c, &run.stack_id, Some(&run.id))?;
+            }
+            Ok(ok)
+        })?;
+        if ok {
+            runner::cleanup(app, &run.id);
+            runner::publish(app, &run.stack_id, &run.id, "discarded");
+            app.sched.kick();
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 #[derive(Deserialize)]

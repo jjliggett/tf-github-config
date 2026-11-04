@@ -417,7 +417,7 @@ pub async fn upload_cv(State(app): State<AppRef>, Path(id): Path<String>, Query(
     if cv.auto_queue {
         let s = find_ws(&app, &cv.stack_id)?;
         let kind = if cv.speculative { "proposed" } else { "tracked" };
-        enqueue_run(&app, &s, kind, &cv.id, s.auto_apply, "Queued by configuration upload", "tfe-api")?;
+        enqueue_run(&app, &s, kind, &cv.id, s.auto_apply, "Queued by configuration upload", "tfe-api", None)?;
     }
     Ok(StatusCode::OK)
 }
@@ -480,7 +480,7 @@ pub async fn create_run(State(app): State<AppRef>, p: Principal, body: Bytes) ->
         app.authz.require(&p, &s.space_id, Role::Writer)?;
     }
     let auto = a["auto-apply"].as_bool().unwrap_or(s.auto_apply);
-    let run = enqueue_run(&app, &s, kind, &cv.id, auto, a["message"].as_str().unwrap_or(""), "tfe-api")?;
+    let run = enqueue_run(&app, &s, kind, &cv.id, auto, a["message"].as_str().unwrap_or(""), "tfe-api", None)?;
     Ok(ok(StatusCode::CREATED, json!({"data": run_json(&run)})))
 }
 

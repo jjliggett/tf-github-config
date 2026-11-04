@@ -15,6 +15,7 @@ mod policy;
 mod runner;
 mod store;
 mod util;
+mod vcs;
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -130,6 +131,7 @@ async fn serve(cfg: app::Config, cpus: usize, started: Instant) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(cfg.listen).await.with_context(|| format!("binding {}", cfg.listen))?;
     tokio::spawn(runner::scheduler_loop(app.clone()));
     tokio::spawn(notify::sender(app.clone()));
+    tokio::spawn(api::vcs::reporter(app.clone()));
     tracing::info!(
         listen = %cfg.listen,
         data = %cfg.data.display(),

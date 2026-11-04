@@ -40,6 +40,18 @@ pub struct Stack {
     pub latest_run_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vcs: Option<StackVcs>,
+}
+
+/// Where a stack's code comes from.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct StackVcs {
+    pub integration_id: String,
+    pub repo: String,
+    pub branch: String,
+    /// Allow `/cairn apply` comments on pull requests.
+    pub pr_apply: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -61,6 +73,9 @@ pub struct Run {
     pub error: Option<String>,
     pub created_at: String,
     pub status_times: Value,
+    /// VCS origin: `{integration, repo, sha, branch, pr}` (None for uploads).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<Value>,
     /// Approval-policy state: `pending`, `approved`, `rejected` (None: no approval policies).
     pub approval: Option<String>,
     #[serde(skip)]
@@ -176,7 +191,7 @@ pub fn list_spaces(c: &Connection) -> Result<Vec<Space>> {
 
 const STACK_COLS: &str = "s.id, s.space_id, sp.name, s.name, s.description, s.engine_version, s.auto_apply,
     s.project_root, s.labels, s.lock_id, s.lock_info, s.current_state_id, s.latest_run_id,
-    s.created_at, s.updated_at";
+    s.created_at, s.updated_at, s.vcs_id, s.repo, s.branch, s.pr_apply";
 
 fn stack_row(r: &Row) -> rusqlite::Result<Stack> {
     let labels: String = r.get(8)?;
@@ -199,7 +214,33 @@ fn stack_row(r: &Row) -> rusqlite::Result<Stack> {
         latest_run_id: r.get(12)?,
         created_at: r.get(13)?,
         updated_at: r.get(14)?,
+        vcs: match r.get::<_, Option<String>>(15)? {
+            Some(integration_id) => Some(StackVcs {
+                integration_id,
+                repo: r.get::<_, Option<String>>(16)?.unwrap_or_default(),
+                branch: r.get::<_, Option<String>>(17)?.unwrap_or_default(),
+                pr_apply: r.get(18)?,
+            }),
+            None => None,
+        },
     })
+}
+
+/// Set or clear a stack's VCS source.
+pub fn set_stack_vcs(c: &Connection, id: &str, v: Option<&StackVcs>) -> Result<()> {
+    c.execute(
+        "UPDATE stacks SET vcs_id = ?2, repo = ?3, branch = ?4, pr_apply = ?5, updated_at = ?6 WHERE id = ?1",
+        params![id, v.map(|v| &v.integration_id), v.map(|v| &v.repo), v.map(|v| &v.branch), v.map(|v| v.pr_apply).unwrap_or(false), now()],
+    )?;
+    Ok(())
+}
+
+/// Stacks fed by `repo` through integration `vcs_id`.
+pub fn stacks_for_repo(c: &Connection, vcs_id: &str, repo: &str) -> Result<Vec<Stack>> {
+    let sql = format!("SELECT {STACK_COLS} FROM stacks s JOIN spaces sp ON sp.id = s.space_id WHERE s.vcs_id = ?1 AND lower(s.repo) = lower(?2) ORDER BY s.name");
+    let mut st = c.prepare_cached(&sql)?;
+    let rows = st.query_map(params![vcs_id, repo], stack_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
 }
 
 pub struct NewStack<'a> {
@@ -364,7 +405,7 @@ pub fn mark_config_uploaded(c: &Connection, id: &str, sha: &str, size: i64) -> R
 // ---------------------------------------------------------------- runs
 
 const RUN_COLS: &str = "id, stack_id, kind, status, config_id, auto_apply, message, triggered_by, has_changes,
-    adds, changes, destroys, plan_summary, error, created_at, status_times, seq, approval";
+    adds, changes, destroys, plan_summary, error, created_at, status_times, seq, approval, source";
 
 fn run_row(r: &Row) -> rusqlite::Result<Run> {
     let st: String = r.get(15)?;
@@ -387,6 +428,7 @@ fn run_row(r: &Row) -> rusqlite::Result<Run> {
         status_times: serde_json::from_str(&st).unwrap_or(Value::Null),
         seq: r.get(16)?,
         approval: r.get(17)?,
+        source: r.get::<_, Option<String>>(18)?.and_then(|s| serde_json::from_str(&s).ok()),
     })
 }
 
@@ -397,6 +439,7 @@ pub struct NewRun<'a> {
     pub auto_apply: bool,
     pub message: &'a str,
     pub triggered_by: &'a str,
+    pub source: Option<&'a Value>,
 }
 
 pub fn create_run(c: &Connection, n: &NewRun) -> Result<Run> {
@@ -404,9 +447,9 @@ pub fn create_run(c: &Connection, n: &NewRun) -> Result<Run> {
     let t = now();
     let times = serde_json::json!({ "plan_queued": t }).to_string();
     c.execute(
-        "INSERT INTO runs (id, stack_id, kind, status, config_id, auto_apply, message, triggered_by, created_at, status_times)
-         VALUES (?1, ?2, ?3, 'plan_queued', ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![id, n.stack_id, n.kind, n.config_id, n.auto_apply, n.message, n.triggered_by, t, times],
+        "INSERT INTO runs (id, stack_id, kind, status, config_id, auto_apply, message, triggered_by, created_at, status_times, source)
+         VALUES (?1, ?2, ?3, 'plan_queued', ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![id, n.stack_id, n.kind, n.config_id, n.auto_apply, n.message, n.triggered_by, t, times, n.source.map(|v| v.to_string())],
     )?;
     c.execute("UPDATE stacks SET latest_run_id = ?2 WHERE id = ?1", params![n.stack_id, id])?;
     Ok(get_run(c, &id)?.expect("just inserted"))
@@ -421,6 +464,17 @@ pub fn list_runs(c: &Connection, stack_id: &str, before_seq: i64, limit: i64) ->
     let sql = format!("SELECT {RUN_COLS} FROM runs WHERE stack_id = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3");
     let mut st = c.prepare_cached(&sql)?;
     let rows = st.query_map(params![stack_id, before_seq, limit], run_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Runs started from pull request `pr` of `repo` (newest first).
+pub fn runs_for_pr(c: &Connection, vcs_id: &str, repo: &str, pr: i64) -> Result<Vec<Run>> {
+    let sql = format!(
+        "SELECT {RUN_COLS} FROM runs WHERE source IS NOT NULL AND json_extract(source, '$.integration') = ?1
+         AND lower(json_extract(source, '$.repo')) = lower(?2) AND json_extract(source, '$.pr') = ?3 ORDER BY seq DESC"
+    );
+    let mut st = c.prepare_cached(&sql)?;
+    let rows = st.query_map(params![vcs_id, repo, pr], run_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
 }
 

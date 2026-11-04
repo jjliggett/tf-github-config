@@ -3,6 +3,7 @@
 mod client;
 mod identity;
 mod policy;
+mod vcs;
 mod mcp;
 
 use std::io::{IsTerminal, Write};
@@ -74,6 +75,9 @@ enum Cmd {
     /// Policies as code (Rego): plan, approval, login, push, trigger, task, notification.
     #[command(subcommand)]
     Policy(policy::PolicyCmd),
+    /// VCS integrations (GitHub, GitLab, Bitbucket, Azure DevOps, Gitea, Forgejo).
+    #[command(subcommand)]
+    Vcs(vcs::VcsCmd),
     /// Notification webhooks of a space.
     #[command(subcommand)]
     Webhook(policy::WebhookCmd),
@@ -125,7 +129,7 @@ enum StackCmd {
     },
     Create {
         name: String,
-        #[arg(long)]
+        #[arg(long, env = "CAIRN_SPACE")]
         space: Option<String>,
         #[arg(long, default_value = "")]
         description: String,
@@ -137,10 +141,30 @@ enum StackCmd {
         project_root: String,
         #[arg(long = "label")]
         labels: Vec<String>,
+        /// VCS integration (name or ID) to take code from.
+        #[arg(long, requires = "repo")]
+        vcs: Option<String>,
+        /// Repository: owner/name (Azure DevOps: project/repo).
+        #[arg(long, requires = "vcs")]
+        repo: Option<String>,
+        /// Tracked branch.
+        #[arg(long, default_value = "main")]
+        branch: String,
+        /// Allow `/cairn apply` comments on pull requests.
+        #[arg(long)]
+        pr_apply: bool,
     },
     Delete {
         #[command(flatten)]
         sel: StackSel,
+    },
+    /// Start a tracked run from the head of the stack's VCS branch.
+    Sync {
+        #[command(flatten)]
+        sel: StackSel,
+        /// Follow the logs.
+        #[arg(short, long)]
+        follow: bool,
     },
     /// Plan the local directory without changing anything (proposed run).
     Preview {
@@ -451,6 +475,7 @@ fn dispatch(c: &Client, out: &Out, cmd: &Cmd) -> Result<u8> {
         Cmd::Audit { limit } => identity::audit(c, out, *limit)?,
         Cmd::Policy(cmd) => policy::policy(c, out, cmd)?,
         Cmd::Webhook(cmd) => policy::webhook(c, out, cmd)?,
+        Cmd::Vcs(cmd) => vcs::vcs(c, out, cmd)?,
         Cmd::Stack(s) => return stack(c, out, s),
         Cmd::Run(r) => return run_cmd(c, out, r),
     }
@@ -482,11 +507,21 @@ fn stack(c: &Client, out: &Out, cmd: &StackCmd) -> Result<u8> {
             out.object(&v, &["id", "name", "space", "description", "engine_version", "auto_apply", "project_root",
                              "labels", "locked", "latest_run_id", "current_state_id", "created_at"]);
         }
-        StackCmd::Create { name, space, description, engine_version, auto_apply, project_root, labels } => {
+        StackCmd::Create { name, space, description, engine_version, auto_apply, project_root, labels, vcs, repo, branch, pr_apply } => {
+            let vcs = vcs.as_ref().map(|i| json!({"integration": i, "repo": repo, "branch": branch, "pr_apply": pr_apply}));
             let v = c.send("POST", "/api/v1/stacks", &json!({
                 "name": name, "space": space, "description": description, "engine_version": engine_version,
-                "auto_apply": auto_apply, "project_root": project_root, "labels": labels}))?;
+                "auto_apply": auto_apply, "project_root": project_root, "labels": labels, "vcs": vcs}))?;
             out.object(&v, &["id", "name", "space", "auto_apply"]);
+        }
+        StackCmd::Sync { sel, follow: f } => {
+            let r = c.send("POST", &sel.path("/sync"), &json!({}))?;
+            if *f {
+                let r = follow(c, out, &r, 0)?.1;
+                report(out, &r);
+                return Ok(exit_for(&r, false));
+            }
+            report(out, &r);
         }
         StackCmd::Delete { sel } => {
             c.delete(&sel.path(""))?;

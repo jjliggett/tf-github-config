@@ -151,3 +151,128 @@ class FakeAzureBlob(FakeService):
         to_sign = "\n".join(fields) + "\n" + canon_headers + f"/{self.account}{path}"
         want = base64.b64encode(hmac.new(base64.b64decode(self.key), to_sign.encode(), hashlib.sha256).digest()).decode()
         return hmac.compare_digest(want, auth[len(prefix):])
+
+
+class FakeForge(FakeService):
+    """One provider's REST API (github, gitea, forgejo, gitlab, bitbucket,
+    azure_devops): serves source archives in that provider's layout and
+    records commit statuses and pull request comments."""
+
+    AUTH = {
+        "github": lambda t: ("Authorization", f"Bearer {t}"),
+        "gitea": lambda t: ("Authorization", f"token {t}"),
+        "forgejo": lambda t: ("Authorization", f"token {t}"),
+        "gitlab": lambda t: ("Private-Token", t),
+        "bitbucket": lambda t: ("Authorization", f"Bearer {t}"),
+        "azure_devops": lambda t: ("Authorization", "Basic " + base64.b64encode(f":{t}".encode()).decode()),
+    }
+
+    def __init__(self, provider, token="forge-token"):
+        self.provider, self.token = provider, token
+        self.repos = {}        # repo -> {rev: {path: text}}
+        self.statuses = []     # (repo, sha, body)
+        self.comments = {}     # id -> {"repo", "pr", "body", "edits"}
+        self.unauthorized = 0
+        super().__init__()
+
+    @property
+    def api_url(self):
+        return self.url + ("/api/v1" if self.provider in ("gitea", "forgejo") else "")
+
+    def commit(self, repo, rev, files):
+        self.repos.setdefault(repo, {})[rev] = files
+
+    def _archive(self, repo, rev, prefix):
+        import io
+        import tarfile
+        import zipfile
+        files = self.repos.get(repo, {}).get(rev)
+        if files is None:
+            return 404, b"no such revision"
+        buf = io.BytesIO()
+        if self.provider == "azure_devops":
+            with zipfile.ZipFile(buf, "w") as z:
+                for name, text in files.items():
+                    z.writestr(name, text)
+            return 200, buf.getvalue()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            d = tarfile.TarInfo(prefix)
+            d.type = tarfile.DIRTYPE
+            tf.addfile(d)
+            for name, text in files.items():
+                data = text.encode()
+                info = tarfile.TarInfo(f"{prefix}/{name}")
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+        return 200, buf.getvalue()
+
+    def _comment(self, method, repo, pr, cid, payload):
+        import json
+        content = payload.get("content")
+        text = payload.get("body") or (content.get("raw") if isinstance(content, dict) else content) \
+            or (payload.get("comments") or [{}])[0].get("content")
+        if method == "POST":
+            cid = str(len(self.comments) + 100)
+            self.comments[cid] = {"repo": repo, "pr": int(pr), "body": text, "edits": 0}
+        else:
+            if cid not in self.comments:
+                return 404, b"{}"
+            self.comments[cid]["body"] = text
+            self.comments[cid]["edits"] += 1
+        return 200, json.dumps({"id": int(cid)}).encode()
+
+    def handle(self, method, path, headers, body):
+        import json
+        import re
+        name, value = self.AUTH[self.provider](self.token)
+        if headers.get(name) != value:
+            self.unauthorized += 1
+            return 401, b'{"message": "bad credentials"}'
+        u = urllib.parse.urlparse(path)
+        p, q = urllib.parse.unquote(u.path), urllib.parse.parse_qs(u.query)
+        payload = json.loads(body) if body else {}
+        prov = self.provider
+        if prov == "github":
+            if m := re.fullmatch(r"/repos/([^/]+/[^/]+)/tarball/(.+)", p):
+                return self._archive(m[1], m[2], f"{m[1].replace('/', '-')}-{m[2][:7]}")
+            if m := re.fullmatch(r"/repos/([^/]+/[^/]+)/statuses/(\w+)", p):
+                self.statuses.append((m[1], m[2], payload))
+                return 201, b"{}"
+        if prov in ("gitea", "forgejo"):
+            if m := re.fullmatch(r"/api/v1/repos/([^/]+/[^/]+)/archive/(.+)\.tar\.gz", p):
+                return self._archive(m[1], m[2], m[1].split("/")[1])
+            if m := re.fullmatch(r"/api/v1/repos/([^/]+/[^/]+)/statuses/(\w+)", p):
+                self.statuses.append((m[1], m[2], payload))
+                return 201, b"{}"
+            p = p[len("/api/v1"):]
+        if prov in ("github", "gitea", "forgejo"):
+            if m := re.fullmatch(r"/repos/([^/]+/[^/]+)/issues/(\d+)/comments", p):
+                return self._comment(method, m[1], m[2], None, payload)
+            if m := re.fullmatch(r"/repos/([^/]+/[^/]+)/issues/comments/(\d+)", p):
+                return self._comment(method, m[1], 0, m[2], payload)
+        if prov == "gitlab":
+            if m := re.fullmatch(r"/projects/(.+)/repository/archive\.tar\.gz", p):
+                return self._archive(m[1], q["sha"][0], f"{m[1].split('/')[-1]}-{q['sha'][0]}")
+            if m := re.fullmatch(r"/projects/(.+)/statuses/(\w+)", p):
+                self.statuses.append((m[1], m[2], payload))
+                return 201, b"{}"
+            if m := re.fullmatch(r"/projects/(.+)/merge_requests/(\d+)/notes(?:/(\d+))?", p):
+                return self._comment(method, m[1], m[2], m[3], payload)
+        if prov == "bitbucket":
+            if m := re.fullmatch(r"/([^/]+/[^/]+)/get/(.+)\.tar\.gz", p):
+                return self._archive(m[1], m[2], f"{m[1].replace('/', '-')}-{m[2][:12]}")
+            if m := re.fullmatch(r"/repositories/([^/]+/[^/]+)/commit/(\w+)/statuses/build", p):
+                self.statuses.append((m[1], m[2], payload))
+                return 201, b"{}"
+            if m := re.fullmatch(r"/repositories/([^/]+/[^/]+)/pullrequests/(\d+)/comments(?:/(\d+))?", p):
+                return self._comment(method, m[1], m[2], m[3], payload)
+        if prov == "azure_devops":
+            if m := re.fullmatch(r"/([^/]+)/_apis/git/repositories/([^/]+)/items", p):
+                assert q.get("$format") == ["zip"], q
+                return self._archive(f"{m[1]}/{m[2]}", q["versionDescriptor.version"][0], "")
+            if m := re.fullmatch(r"/([^/]+)/_apis/git/repositories/([^/]+)/commits/(\w+)/statuses", p):
+                self.statuses.append((f"{m[1]}/{m[2]}", m[3], payload))
+                return 201, b"{}"
+            if m := re.fullmatch(r"/([^/]+)/_apis/git/repositories/([^/]+)/pullRequests/(\d+)/threads(?:/(\d+)/comments/1)?", p):
+                return self._comment(method, f"{m[1]}/{m[2]}", m[3], m[4], payload)
+        return 404, f"fake {prov}: no route for {method} {p}".encode()

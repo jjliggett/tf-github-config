@@ -239,6 +239,14 @@ impl App {
         sha256_hex(&m)[..32].to_string()
     }
 
+    /// URL for links that leave the request context (commit statuses, PR comments).
+    pub fn public_url(&self) -> String {
+        match &self.cfg.external_url {
+            Some(u) => u.trim_end_matches('/').to_string(),
+            None => format!("http://{}", self.cfg.listen),
+        }
+    }
+
     pub fn base_url(&self, headers: &HeaderMap) -> String {
         if let Some(u) = &self.cfg.external_url {
             return u.trim_end_matches('/').to_string();
@@ -306,6 +314,13 @@ impl ApiError {
     }
     pub fn conflict(msg: impl Into<String>) -> Self {
         Self::new(StatusCode::CONFLICT, msg)
+    }
+    pub fn internal(msg: impl Into<String>) -> Self {
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, msg)
+    }
+    /// Human-readable message (for logs and commit statuses).
+    pub fn detail(&self) -> String {
+        self.title.clone()
     }
 }
 
