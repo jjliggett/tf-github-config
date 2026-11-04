@@ -80,7 +80,7 @@ fn download(version: &str, dest: &Path) -> Result<()> {
     let os = std::env::consts::OS;
     let file = format!("tofu_{version}_{os}_{arch}.zip");
     let base = format!("https://github.com/opentofu/opentofu/releases/download/v{version}");
-    let agent = ureq::AgentBuilder::new().try_proxy_from_env(true).build();
+    let agent = crate::http::agent(&base);
 
     let sums = agent.get(&format!("{base}/tofu_{version}_SHA256SUMS")).call()?.into_string()?;
     let want = sums

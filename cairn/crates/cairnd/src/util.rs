@@ -43,7 +43,15 @@ pub fn sha256_hex(data: &[u8]) -> String {
 
 /// RFC 3339 UTC timestamp, fixed-width milliseconds (so timestamps sort as strings).
 pub fn now() -> String {
-    let t = time::OffsetDateTime::now_utc();
+    fmt_ts(time::OffsetDateTime::now_utc())
+}
+
+/// Timestamp `secs` seconds from now, same format as [`now`].
+pub fn now_plus_secs(secs: u64) -> String {
+    fmt_ts(time::OffsetDateTime::now_utc() + time::Duration::seconds(secs as i64))
+}
+
+pub fn fmt_ts(t: time::OffsetDateTime) -> String {
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
         t.year(),

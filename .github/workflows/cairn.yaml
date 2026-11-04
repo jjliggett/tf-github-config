@@ -32,5 +32,5 @@ jobs:
       - run: cargo build --locked
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
-      - name: End-to-end tests
-        run: TOFU="$RUNNER_TEMP/tofu" python3 tests/e2e.py -v
+      - name: End-to-end tests (real cairnd, cairn, OpenTofu; Dex/Gitea in Docker)
+        run: TOFU="$RUNNER_TEMP/tofu" python3 -m unittest discover -s tests -p 'test_*.py' -v

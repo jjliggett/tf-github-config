@@ -10,7 +10,8 @@ the benchmarks that set its targets.
 |---|---|
 | [`crates/cairnd`](crates/cairnd) | The server: API, embedded runner, state, events |
 | [`crates/cairn-cli`](crates/cairn-cli) | `cairn`: the CLI and `cairn mcp serve` |
-| [`tests/e2e.py`](tests/e2e.py) | End-to-end tests against a real `cairnd`, `cairn` and OpenTofu |
+| [`tests/`](tests/) | End-to-end tests against a real `cairnd`, `cairn` and OpenTofu (`test_*.py`) |
+| [`docs/GUIDE.md`](docs/GUIDE.md) | User guide: identity and access, storage, policies, VCS, registry, schedules, dependencies |
 | [`docs/SPEC.md`](docs/SPEC.md) | The specification: concepts, behaviour, APIs, CLI, MCP server, security, budgets, Rust implementation plan and milestones |
 | [`docs/benchmark-report.md`](docs/benchmark-report.md) | What we measured, including Cairn against OTF, Terrakube and Atlantis |
 | [`bench/`](bench/) | Reproducible benchmark harness (Docker + cgroup accounting) and raw results |
@@ -80,13 +81,14 @@ managed runner picks it up.
 | Runs | Proposed and tracked runs, auto-apply or confirm/discard, cancel (SIGINT, then kill), per-stack queue, configurable concurrency, no fixed sleeps, structured plan summaries | Destroy and task runs, dependencies, drift schedules |
 | State | Versioned, deduplicated by SHA-256; OpenTofu `http` backend with locking; serial/lineage checks | Encryption at rest for state, rollback command |
 | TFE API | Organizations, workspaces (with pagination), configuration versions with pre-signed uploads, runs and actions, plans and applies with logs, current state version and outputs, workspace locks | `tofu login` and the `cloud {}` block over TLS, state-version upload, the `tfe` provider, teams |
-| Security | Site token plus hashed API tokens; sensitive variables encrypted (ChaCha20-Poly1305); runs get a clean environment | OIDC (Authentik), RBAC per space, workload identity / OpenBao |
+| Identity & access | Space tree with inherited roles (reader/planner/writer/admin); users from OIDC (bearer ID tokens and browser/CLI login with PKCE); teams = IdP groups; user and service tokens with expiry; audit log; sensitive variables encrypted (ChaCha20-Poly1305) | Workload identity / OpenBao |
 | VCS, policy, registry | — | Forgejo/Gitea webhooks and PR comments (with Atlantis's lock leak fixed), Rego policies, module registry |
 | CLI / MCP | Login, spaces, stacks, preview/deploy with live logs, runs, variables, state, outputs, raw API; MCP over stdio with a human gate on applies | Repo-aware stack inference, MCP over HTTP with OAuth |
 
 Tests: `cargo test` (unit) and
-`CAIRND=target/debug/cairnd TOFU=$(which tofu) python3 tests/e2e.py`
-(17 end-to-end tests).
+`TOFU=$(which tofu) python3 -m unittest discover -s tests -p 'test_*.py'`
+(end-to-end against a real `cairnd`, `cairn` and OpenTofu; the OIDC tests
+start Dex in Docker and are skipped without it).
 
 ## Research material
 | `upstream/otf` | Submodule: [leg100/otf](https://github.com/leg100/otf) at `v0.6.3` |

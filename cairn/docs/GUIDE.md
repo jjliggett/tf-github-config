@@ -1,0 +1,63 @@
+# Cairn user guide
+
+Task-oriented documentation for running Cairn. The design rationale is in
+[SPEC.md](SPEC.md); benchmarks are in [benchmark-report.md](benchmark-report.md).
+
+## Identity and access
+
+### Concepts
+
+| Concept | Meaning |
+|---|---|
+| Space | A folder of stacks. Spaces nest (`--parent`). A role granted on a space applies to every space below it. |
+| Role | `reader` < `planner` < `writer` < `admin` (TFC's read/plan/write/admin; Spacelift's read/write/admin plus "plan"). |
+| User | Created on first OIDC login. Identified by issuer + `sub`; carries email, name and groups. |
+| Team | An IdP group. A binding to team `platform` applies to every user whose `groups` claim contains `platform`. |
+| Token | `user` tokens act as their user (the CLI gets one on `cairn login`). `service` tokens have their own role bindings. Both can expire; both are stored as SHA-256 hashes. |
+| Site admin | The site token (`CAIRN_SITE_TOKEN`), members of `CAIRN_OIDC_ADMIN_GROUP`, and tokens created with `site_admin`. |
+
+What each role allows:
+
+| Action | reader | planner | writer | admin |
+|---|---|---|---|---|
+| See stacks, runs, logs, plans, non-sensitive outputs and variables | ✔ | ✔ | ✔ | ✔ |
+| Proposed runs (plans), cancel proposed runs | | ✔ | ✔ | ✔ |
+| Tracked runs, confirm/discard/cancel, variables, locks, state download/upload, sensitive outputs | | | ✔ | ✔ |
+| Create/edit/delete stacks, child spaces, role bindings, service tokens for the space | | | | ✔ |
+
+Nobody can grant a role higher than their own. Stacks and runs in spaces you
+can't read answer `404`, so their existence isn't revealed. Every
+non-GET request is written to the audit log (`cairn audit`, site admins).
+
+### OIDC (Authentik, Keycloak, Dex, Google, …)
+
+```sh
+cairnd \
+  --oidc-issuer https://auth.example.com/application/o/cairn/ \
+  --oidc-client-id cairn --oidc-client-secret "$SECRET" \
+  --oidc-admin-group cairn-admins \
+  --external-url https://cairn.example.com
+```
+
+Register `https://cairn.example.com/auth/callback` as a redirect URI and
+include a `groups` claim (`--oidc-groups-claim` to change its name).
+
+* **Browser/CLI login**: `cairn login --host https://cairn.example.com` opens
+  the IdP, then hands a session token (default 12 h, `--session-hours`) back to
+  the CLI through a loopback redirect, like `tofu login`. Only loopback
+  redirects are accepted.
+* **Bearer ID tokens**: any request may present an ID token from the issuer
+  (`Authorization: Bearer <jwt>`), verified against the issuer's JWKS. Add CI
+  audiences with `--oidc-audiences`.
+
+### Day-to-day
+
+```sh
+cairn space create platform                        # site admin: top-level space
+cairn space create prod --parent platform          # admin on platform
+cairn role grant platform planner --team developers
+cairn role grant prod writer --user alice@example.com
+cairn token create --service --role prod=writer --expires-hours 720 --description ci
+cairn whoami                                       # your principal and roles per space
+cairn audit --limit 20
+```

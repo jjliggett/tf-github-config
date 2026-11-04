@@ -15,8 +15,9 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use crate::api::native::{enqueue_run, find_run, save_config, valid_name};
+use crate::api::native::{enqueue_run, save_config, valid_name};
 use crate::app::{ApiError, ApiResult, AppRef};
+use crate::auth::{Principal, Role};
 use crate::store::{self, Run, Space, Stack};
 
 const JSONAPI: &str = "application/vnd.api+json";
@@ -61,12 +62,12 @@ pub async fn ping() -> impl IntoResponse {
     (StatusCode::NO_CONTENT, [("TFP-API-Version", "2.5"), ("TFP-AppName", "Cairn")])
 }
 
-pub async fn account_details() -> Response {
+pub async fn account_details(p: Principal) -> Response {
     ok(
         StatusCode::OK,
-        json!({"data": {"id": "user-cairn-admin", "type": "users",
-               "attributes": {"username": "admin", "email": "", "is-service-account": false,
-                               "permissions": {"can-create-organizations": true}}}}),
+        json!({"data": {"id": p.id, "type": "users",
+               "attributes": {"username": p.name, "email": "", "is-service-account": p.kind != "user",
+                               "permissions": {"can-create-organizations": p.site_admin}}}}),
     )
 }
 
@@ -78,12 +79,14 @@ fn org_json(s: &Space) -> Value {
                            "permissions": {"can-update": true, "can-destroy": true, "can-create-workspace": true}}})
 }
 
-pub async fn create_org(State(app): State<AppRef>, body: Bytes) -> ApiResult<Response> {
+pub async fn create_org(State(app): State<AppRef>, p: Principal, body: Bytes) -> ApiResult<Response> {
+    app.authz.require_site_admin(&p)?;
     let b = parse(&body)?;
     let name = attrs(&b)["name"].as_str().unwrap_or_default().to_string();
     valid_name(&name)?;
     let email = attrs(&b)["email"].as_str().unwrap_or_default().to_string();
-    let s = app.db.write(|c| store::create_space(c, &name, &email))?;
+    let s = app.db.write(|c| store::create_space(c, &name, &email, None))?;
+    app.authz.reload(&app.db)?;
     Ok(ok(StatusCode::CREATED, json!({"data": org_json(&s)})))
 }
 
@@ -91,12 +94,12 @@ fn find_org(app: &AppRef, name: &str) -> ApiResult<Space> {
     app.db.read(|c| store::space_by_name(c, name))?.ok_or_else(|| ApiError::not_found("organization"))
 }
 
-pub async fn get_org(State(app): State<AppRef>, Path(org): Path<String>) -> ApiResult<Response> {
-    Ok(ok(StatusCode::OK, json!({"data": org_json(&find_org(&app, &org)?)})))
+pub async fn get_org(State(app): State<AppRef>, p: Principal, Path(org): Path<String>) -> ApiResult<Response> {
+    Ok(ok(StatusCode::OK, json!({"data": org_json(&org_for(&app, &p, &org, Role::Reader)?)})))
 }
 
-pub async fn entitlements(State(app): State<AppRef>, Path(org): Path<String>) -> ApiResult<Response> {
-    find_org(&app, &org)?;
+pub async fn entitlements(State(app): State<AppRef>, p: Principal, Path(org): Path<String>) -> ApiResult<Response> {
+    org_for(&app, &p, &org, Role::Reader)?;
     Ok(ok(
         StatusCode::OK,
         json!({"data": {"id": format!("org-{org}"), "type": "entitlement-sets",
@@ -232,18 +235,34 @@ fn find_ws(app: &AppRef, id: &str) -> ApiResult<Stack> {
     app.db.read(|c| store::get_stack(c, id))?.ok_or_else(|| ApiError::not_found("workspace"))
 }
 
+/// Workspace lookup plus a role check on its space.
+fn ws_for(app: &AppRef, p: &Principal, id: &str, need: Role) -> ApiResult<Stack> {
+    let s = find_ws(app, id)?;
+    app.authz.require(p, &s.space_id, need).map_err(|e| if e.status == StatusCode::NOT_FOUND { ApiError::not_found("workspace") } else { e })?;
+    Ok(s)
+}
+
+fn org_for(app: &AppRef, p: &Principal, name: &str, need: Role) -> ApiResult<Space> {
+    let s = find_org(app, name)?;
+    app.authz.require(p, &s.id, need).map_err(|e| if e.status == StatusCode::NOT_FOUND { ApiError::not_found("organization") } else { e })?;
+    Ok(s)
+}
+
+fn run_for(app: &AppRef, p: &Principal, id: &str, need: Role) -> ApiResult<Run> {
+    crate::api::native::authorized_run(app, p, id, need)
+}
+
 pub async fn list_workspaces(
-    State(app): State<AppRef>,
+    State(app): State<AppRef>, p: Principal,
     Path(org): Path<String>,
     Query(q): Query<HashMap<String, String>>,
 ) -> ApiResult<Response> {
     let size: i64 = q.get("page[size]").and_then(|v| v.parse().ok()).unwrap_or(20).clamp(1, 100);
     let page: i64 = q.get("page[number]").and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
     let search = q.get("search[name]").map(String::as_str);
+    // One role check per request, not per workspace.
+    org_for(&app, &p, &org, Role::Reader)?;
     let (stacks, total) = app.db.read(|c| store::list_stacks_page(c, &org, search, size, (page - 1) * size))?;
-    if stacks.is_empty() && page == 1 {
-        find_org(&app, &org)?; // 404 for unknown organizations
-    }
     let pages = (total + size - 1) / size;
     #[derive(Serialize)]
     struct Page<'a> {
@@ -262,12 +281,12 @@ pub async fn list_workspaces(
     Ok((StatusCode::OK, [(header::CONTENT_TYPE, JSONAPI)], bytes).into_response())
 }
 
-pub async fn create_workspace(State(app): State<AppRef>, Path(org): Path<String>, body: Bytes) -> ApiResult<Response> {
+pub async fn create_workspace(State(app): State<AppRef>, p: Principal, Path(org): Path<String>, body: Bytes) -> ApiResult<Response> {
     let b = parse(&body)?;
     let a = attrs(&b);
     let name = a["name"].as_str().unwrap_or_default().to_string();
     valid_name(&name)?;
-    let space = find_org(&app, &org)?;
+    let space = org_for(&app, &p, &org, Role::Admin)?;
     let labels: Vec<String> = a["tag-names"]
         .as_array()
         .map(|v| v.iter().filter_map(|x| x.as_str().map(String::from)).collect())
@@ -289,17 +308,18 @@ pub async fn create_workspace(State(app): State<AppRef>, Path(org): Path<String>
     Ok(ok(StatusCode::CREATED, json!({"data": ws_json(&app, &find_ws(&app, &id)?, &permissions())})))
 }
 
-pub async fn get_workspace_by_name(State(app): State<AppRef>, Path((org, name)): Path<(String, String)>) -> ApiResult<Response> {
+pub async fn get_workspace_by_name(State(app): State<AppRef>, p: Principal, Path((org, name)): Path<(String, String)>) -> ApiResult<Response> {
     let s = app.db.read(|c| store::stack_by_name(c, &org, &name))?.ok_or_else(|| ApiError::not_found("workspace"))?;
+    let s = ws_for(&app, &p, &s.id, Role::Reader)?;
     Ok(ok(StatusCode::OK, json!({"data": ws_json(&app, &s, &permissions())})))
 }
 
-pub async fn get_workspace(State(app): State<AppRef>, Path(id): Path<String>) -> ApiResult<Response> {
-    Ok(ok(StatusCode::OK, json!({"data": ws_json(&app, &find_ws(&app, &id)?, &permissions())})))
+pub async fn get_workspace(State(app): State<AppRef>, p: Principal, Path(id): Path<String>) -> ApiResult<Response> {
+    Ok(ok(StatusCode::OK, json!({"data": ws_json(&app, &ws_for(&app, &p, &id, Role::Reader)?, &permissions())})))
 }
 
-pub async fn update_workspace(State(app): State<AppRef>, Path(id): Path<String>, body: Bytes) -> ApiResult<Response> {
-    let s = find_ws(&app, &id)?;
+pub async fn update_workspace(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, body: Bytes) -> ApiResult<Response> {
+    let s = ws_for(&app, &p, &id, Role::Admin)?;
     let b = parse(&body)?;
     let a = attrs(&b);
     app.db.write(|c| {
@@ -320,11 +340,11 @@ pub async fn update_workspace(State(app): State<AppRef>, Path(id): Path<String>,
 }
 
 pub async fn workspace_action(
-    State(app): State<AppRef>,
+    State(app): State<AppRef>, p: Principal,
     Path((id, action)): Path<(String, String)>,
     body: Bytes,
 ) -> ApiResult<Response> {
-    let s = find_ws(&app, &id)?;
+    let s = ws_for(&app, &p, &id, Role::Writer)?;
     match action.as_str() {
         "lock" => {
             let reason = parse(&body)?["reason"].as_str().unwrap_or("").to_string();
@@ -363,8 +383,8 @@ fn cv_json(app: &AppRef, headers: &HeaderMap, cv: &store::ConfigVersion) -> Valu
            "relationships": {"workspace": {"data": {"id": cv.stack_id, "type": "workspaces"}}}})
 }
 
-pub async fn create_cv(State(app): State<AppRef>, Path(id): Path<String>, headers: HeaderMap, body: Bytes) -> ApiResult<Response> {
-    let s = find_ws(&app, &id)?;
+pub async fn create_cv(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, headers: HeaderMap, body: Bytes) -> ApiResult<Response> {
+    let s = ws_for(&app, &p, &id, Role::Planner)?;
     let b = parse(&body)?;
     let a = attrs(&b);
     let cv = app.db.write(|c| {
@@ -373,8 +393,9 @@ pub async fn create_cv(State(app): State<AppRef>, Path(id): Path<String>, header
     Ok(ok(StatusCode::CREATED, json!({"data": cv_json(&app, &headers, &cv)})))
 }
 
-pub async fn get_cv(State(app): State<AppRef>, Path(id): Path<String>, headers: HeaderMap) -> ApiResult<Response> {
+pub async fn get_cv(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, headers: HeaderMap) -> ApiResult<Response> {
     let cv = app.db.read(|c| store::get_config(c, &id))?.ok_or_else(|| ApiError::not_found("configuration version"))?;
+    ws_for(&app, &p, &cv.stack_id, Role::Reader)?;
     Ok(ok(StatusCode::OK, json!({"data": cv_json(&app, &headers, &cv)})))
 }
 
@@ -434,12 +455,12 @@ fn run_json(r: &Run) -> Value {
     })
 }
 
-pub async fn create_run(State(app): State<AppRef>, body: Bytes) -> ApiResult<Response> {
+pub async fn create_run(State(app): State<AppRef>, p: Principal, body: Bytes) -> ApiResult<Response> {
     let b = parse(&body)?;
     let a = attrs(&b);
     let rel = &b["data"]["relationships"];
     let ws = rel["workspace"]["data"]["id"].as_str().ok_or_else(|| ApiError::bad_request("workspace relationship required"))?;
-    let s = find_ws(&app, ws)?;
+    let s = ws_for(&app, &p, ws, Role::Planner)?;
     let cv_id = match rel["configuration-version"]["data"]["id"].as_str() {
         Some(c) => c.to_string(),
         None => app
@@ -455,17 +476,20 @@ pub async fn create_run(State(app): State<AppRef>, body: Bytes) -> ApiResult<Res
         return Err(ApiError::new(StatusCode::NOT_IMPLEMENTED, "destroy runs are not supported yet"));
     }
     let kind = if a["plan-only"].as_bool().unwrap_or(cv.speculative) { "proposed" } else { "tracked" };
+    if kind != "proposed" {
+        app.authz.require(&p, &s.space_id, Role::Writer)?;
+    }
     let auto = a["auto-apply"].as_bool().unwrap_or(s.auto_apply);
     let run = enqueue_run(&app, &s, kind, &cv.id, auto, a["message"].as_str().unwrap_or(""), "tfe-api")?;
     Ok(ok(StatusCode::CREATED, json!({"data": run_json(&run)})))
 }
 
-pub async fn get_run(State(app): State<AppRef>, Path(id): Path<String>) -> ApiResult<Response> {
-    Ok(ok(StatusCode::OK, json!({"data": run_json(&find_run(&app, &id)?)})))
+pub async fn get_run(State(app): State<AppRef>, p: Principal, Path(id): Path<String>) -> ApiResult<Response> {
+    Ok(ok(StatusCode::OK, json!({"data": run_json(&run_for(&app, &p, &id, Role::Reader)?)})))
 }
 
-pub async fn list_ws_runs(State(app): State<AppRef>, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> ApiResult<Response> {
-    let s = find_ws(&app, &id)?;
+pub async fn list_ws_runs(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> ApiResult<Response> {
+    let s = ws_for(&app, &p, &id, Role::Reader)?;
     let size: i64 = q.get("page[size]").and_then(|v| v.parse().ok()).unwrap_or(20).clamp(1, 100);
     let runs = app.db.read(|c| store::list_runs(c, &s.id, i64::MAX, size))?;
     let data: Vec<Value> = runs.iter().map(run_json).collect();
@@ -473,15 +497,15 @@ pub async fn list_ws_runs(State(app): State<AppRef>, Path(id): Path<String>, Que
 }
 
 pub async fn run_action(
-    State(app): State<AppRef>,
+    State(app): State<AppRef>, p: Principal,
     Path((id, action)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
     use crate::api::native as n;
-    let p = Path(id);
+    let path = Path(id);
     match action.as_str() {
-        "apply" => n::confirm_run(State(app), p).await.map(|_| ()),
-        "discard" => n::discard_run(State(app), p).await.map(|_| ()),
-        "cancel" | "force-cancel" => n::cancel_run(State(app), p).await.map(|_| ()),
+        "apply" => n::confirm_run(State(app), p, path).await.map(|_| ()),
+        "discard" => n::discard_run(State(app), p, path).await.map(|_| ()),
+        "cancel" | "force-cancel" => n::cancel_run(State(app), p, path).await.map(|_| ()),
         _ => Err(ApiError::not_found("action")),
     }?;
     Ok(StatusCode::ACCEPTED)
@@ -489,9 +513,9 @@ pub async fn run_action(
 
 // ---------------------------------------------------------------- plans & applies
 
-fn run_for_phase(app: &AppRef, id: &str) -> ApiResult<Run> {
+fn run_for_phase(app: &AppRef, p: &Principal, id: &str) -> ApiResult<Run> {
     let (_, s) = id.split_once('-').ok_or_else(|| ApiError::not_found("plan"))?;
-    find_run(app, &format!("run-{s}"))
+    run_for(app, p, &format!("run-{s}"), Role::Reader)
 }
 
 fn phase_status(r: &Run, apply: bool) -> &'static str {
@@ -510,8 +534,8 @@ fn phase_status(r: &Run, apply: bool) -> &'static str {
     }
 }
 
-pub async fn get_plan(State(app): State<AppRef>, Path(id): Path<String>, headers: HeaderMap) -> ApiResult<Response> {
-    let r = run_for_phase(&app, &id)?;
+pub async fn get_plan(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, headers: HeaderMap) -> ApiResult<Response> {
+    let r = run_for_phase(&app, &p, &id)?;
     Ok(ok(
         StatusCode::OK,
         json!({"data": {"id": id, "type": "plans", "attributes": {
@@ -522,8 +546,8 @@ pub async fn get_plan(State(app): State<AppRef>, Path(id): Path<String>, headers
     ))
 }
 
-pub async fn get_apply(State(app): State<AppRef>, Path(id): Path<String>, headers: HeaderMap) -> ApiResult<Response> {
-    let r = run_for_phase(&app, &id)?;
+pub async fn get_apply(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, headers: HeaderMap) -> ApiResult<Response> {
+    let r = run_for_phase(&app, &p, &id)?;
     Ok(ok(
         StatusCode::OK,
         json!({"data": {"id": id, "type": "applies", "attributes": {
@@ -534,8 +558,8 @@ pub async fn get_apply(State(app): State<AppRef>, Path(id): Path<String>, header
     ))
 }
 
-pub async fn phase_logs(State(app): State<AppRef>, Path(id): Path<String>) -> ApiResult<Response> {
-    let r = run_for_phase(&app, &id)?;
+pub async fn phase_logs(State(app): State<AppRef>, p: Principal, Path(id): Path<String>) -> ApiResult<Response> {
+    let r = run_for_phase(&app, &p, &id)?;
     let bytes = tokio::fs::read(app.hub.log_path(&r.id)).await.unwrap_or_default();
     Ok(([(header::CONTENT_TYPE, "text/plain")], bytes).into_response())
 }
@@ -550,14 +574,14 @@ fn sv_json(app: &AppRef, headers: &HeaderMap, sv: &store::StateVersion) -> Value
            "relationships": {"run": {"data": sv.run_id.as_ref().map(|r| json!({"id": r, "type": "runs"}))}}})
 }
 
-pub async fn current_state(State(app): State<AppRef>, Path(id): Path<String>, headers: HeaderMap) -> ApiResult<Response> {
-    let s = find_ws(&app, &id)?;
+pub async fn current_state(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, headers: HeaderMap) -> ApiResult<Response> {
+    let s = ws_for(&app, &p, &id, Role::Reader)?;
     let sv = app.db.read(|c| store::current_state(c, &s.id))?.ok_or_else(|| ApiError::not_found("state version"))?;
     Ok(ok(StatusCode::OK, json!({"data": sv_json(&app, &headers, &sv)})))
 }
 
-pub async fn current_outputs(State(app): State<AppRef>, Path(id): Path<String>) -> ApiResult<Response> {
-    let s = find_ws(&app, &id)?;
+pub async fn current_outputs(State(app): State<AppRef>, p: Principal, Path(id): Path<String>) -> ApiResult<Response> {
+    let s = ws_for(&app, &p, &id, Role::Reader)?;
     let sv = app.db.read(|c| store::current_state(c, &s.id))?;
     let mut data = vec![];
     if let Some(sv) = sv {
@@ -573,8 +597,9 @@ pub async fn current_outputs(State(app): State<AppRef>, Path(id): Path<String>) 
     Ok(ok(StatusCode::OK, json!({"data": data})))
 }
 
-pub async fn download_state(State(app): State<AppRef>, Path(id): Path<String>) -> ApiResult<Response> {
+pub async fn download_state(State(app): State<AppRef>, p: Principal, Path(id): Path<String>) -> ApiResult<Response> {
     let sv = app.db.read(|c| store::get_state(c, &id))?.ok_or_else(|| ApiError::not_found("state version"))?;
+    ws_for(&app, &p, &sv.stack_id, Role::Writer)?;
     let bytes = tokio::fs::read(app.dir("blobs/state").join(format!("{}.json", sv.sha256)))
         .await
         .map_err(anyhow::Error::from)?;

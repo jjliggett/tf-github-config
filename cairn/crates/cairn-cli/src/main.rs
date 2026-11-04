@@ -1,6 +1,7 @@
 //! cairn: command-line client and MCP server for Cairn.
 
 mod client;
+mod identity;
 mod mcp;
 
 use std::io::{IsTerminal, Write};
@@ -43,19 +44,36 @@ enum Format {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Save the server URL and token to the config file.
+    /// Log in: with --token, save it; otherwise log in through the server's OIDC provider in a browser.
     Login {
         #[arg(long)]
         host: String,
         #[arg(long)]
-        token: String,
+        token: Option<String>,
+        /// Print the login URL instead of opening a browser.
+        #[arg(long)]
+        no_browser: bool,
     },
     /// Show who the token belongs to.
     Whoami,
+    /// Spaces (folders that scope stacks and roles).
     #[command(subcommand)]
-    Space(SpaceCmd),
+    Space(identity::SpaceCmd),
+    /// Role bindings on spaces.
+    #[command(subcommand)]
+    Role(identity::RoleCmd),
+    /// API tokens.
+    #[command(subcommand)]
+    Token(identity::TokenCmd),
+    /// Audit log (site admins).
+    Audit {
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Stacks: preview, deploy, state, variables, outputs.
     #[command(subcommand)]
     Stack(StackCmd),
+    /// Runs: show, logs, confirm, discard, cancel.
     #[command(subcommand)]
     Run(RunCmd),
     /// Call any API endpoint, e.g. `cairn api GET /api/v1/stacks`.
@@ -66,14 +84,9 @@ enum Cmd {
         #[arg(short, long)]
         data: Option<String>,
     },
+    /// MCP server for AI agents.
     #[command(subcommand)]
     Mcp(McpCmd),
-}
-
-#[derive(Subcommand)]
-enum SpaceCmd {
-    List,
-    Create { name: String },
 }
 
 #[derive(clap::Args, Clone)]
@@ -277,16 +290,16 @@ fn client(cli: &Cli) -> Result<Client> {
 
 // ---------------------------------------------------------------- output
 
-struct Out {
-    json: bool,
+pub struct Out {
+    pub json: bool,
 }
 
 impl Out {
-    fn value(&self, v: &Value) {
+    pub fn value(&self, v: &Value) {
         println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
     }
 
-    fn table(&self, v: &Value, items: &Value, cols: &[(&str, &str)]) {
+    pub fn table(&self, v: &Value, items: &Value, cols: &[(&str, &str)]) {
         if self.json {
             return self.value(v);
         }
@@ -308,7 +321,7 @@ impl Out {
         }
     }
 
-    fn object(&self, v: &Value, keys: &[&str]) {
+    pub fn object(&self, v: &Value, keys: &[&str]) {
         if self.json {
             return self.value(v);
         }
@@ -369,8 +382,12 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<u8> {
     let out = Out { json: cli.output.map(|f| f == Format::Json).unwrap_or(!std::io::stdout().is_terminal()) };
     match &cli.cmd {
-        Cmd::Login { host, token } => {
-            let c = Client::new(host, token);
+        Cmd::Login { host, token, no_browser } => {
+            let token = match token {
+                Some(t) => t.clone(),
+                None => identity::oidc_login(host, !no_browser)?,
+            };
+            let c = Client::new(host, &token);
             c.get("/api/v1/whoami").context("checking the token")?;
             let path = config_path();
             std::fs::create_dir_all(path.parent().unwrap())?;
@@ -408,11 +425,10 @@ fn dispatch(c: &Client, out: &Out, cmd: &Cmd) -> Result<u8> {
             };
             out.value(&v);
         }
-        Cmd::Space(SpaceCmd::List) => {
-            let v = c.get("/api/v1/spaces")?;
-            out.table(&v, &v["items"], &[("NAME", "name"), ("ID", "id"), ("CREATED", "created_at")]);
-        }
-        Cmd::Space(SpaceCmd::Create { name }) => out.value(&c.send("POST", "/api/v1/spaces", &json!({"name": name}))?),
+        Cmd::Space(cmd) => identity::space(c, out, cmd)?,
+        Cmd::Role(cmd) => identity::role(c, out, cmd)?,
+        Cmd::Token(cmd) => identity::token(c, out, cmd)?,
+        Cmd::Audit { limit } => identity::audit(c, out, *limit)?,
         Cmd::Stack(s) => return stack(c, out, s),
         Cmd::Run(r) => return run_cmd(c, out, r),
     }

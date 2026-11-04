@@ -97,6 +97,44 @@ const MIGRATIONS: &[&str] = &[
         created_at   TEXT NOT NULL
     );
     "#,
+    // 2: identity and access
+    r#"
+    ALTER TABLE spaces ADD COLUMN parent_id TEXT REFERENCES spaces(id);
+    ALTER TABLE spaces ADD COLUMN description TEXT NOT NULL DEFAULT '';
+    CREATE TABLE users (
+        id           TEXT PRIMARY KEY,
+        subject      TEXT NOT NULL UNIQUE,
+        email        TEXT NOT NULL DEFAULT '',
+        name         TEXT NOT NULL DEFAULT '',
+        groups       TEXT NOT NULL DEFAULT '[]',
+        site_admin   INTEGER NOT NULL DEFAULT 0,
+        created_at   TEXT NOT NULL,
+        last_seen_at TEXT
+    );
+    CREATE TABLE role_bindings (
+        id             TEXT PRIMARY KEY,
+        space_id       TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+        principal_kind TEXT NOT NULL,
+        principal      TEXT NOT NULL,
+        role           TEXT NOT NULL,
+        created_at     TEXT NOT NULL,
+        UNIQUE (space_id, principal_kind, principal)
+    );
+    ALTER TABLE tokens ADD COLUMN kind TEXT NOT NULL DEFAULT 'service';
+    ALTER TABLE tokens ADD COLUMN owner TEXT;
+    ALTER TABLE tokens ADD COLUMN site_admin INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE tokens ADD COLUMN expires_at TEXT;
+    -- Tokens created before roles existed were all-powerful; keep them working.
+    UPDATE tokens SET site_admin = 1;
+    CREATE TABLE audit_log (
+        seq       INTEGER PRIMARY KEY AUTOINCREMENT,
+        at        TEXT NOT NULL,
+        principal TEXT NOT NULL,
+        method    TEXT NOT NULL,
+        path      TEXT NOT NULL,
+        status    INTEGER NOT NULL
+    );
+    "#,
 ];
 
 pub struct Db {

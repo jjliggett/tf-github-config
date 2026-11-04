@@ -15,23 +15,38 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
 use crate::app::{ApiError, ApiResult, AppRef};
+use crate::auth::{Principal, Role};
 use crate::events::{Follow, LogMsg};
 use crate::runner;
 use crate::store::{self, Run, Stack};
-use crate::util::{new_token, sha256_hex};
+use crate::util::sha256_hex;
 
 pub const DEFAULT_SPACE: &str = "default";
 
 // ---------------------------------------------------------------- helpers
 
-/// Resolve `{stack}` path segments: an ID (`stk-…`) or a name in `?space=` (default space otherwise).
-pub fn find_stack(app: &AppRef, key: &str, space: Option<&str>) -> ApiResult<Stack> {
+/// Resolve `{stack}` path segments: an ID (`stk-…`) or a name in `?space=`
+/// (default space otherwise), and check that `p` has at least `need` on its space.
+pub fn find_stack(app: &AppRef, p: &Principal, key: &str, space: Option<&str>, need: Role) -> ApiResult<Stack> {
     let s = if key.starts_with("stk-") {
         app.db.read(|c| store::get_stack(c, key))?
     } else {
         app.db.read(|c| store::stack_by_name(c, space.unwrap_or(DEFAULT_SPACE), key))?
     };
-    s.ok_or_else(|| ApiError::not_found("stack"))
+    let s = s.ok_or_else(|| ApiError::not_found("stack"))?;
+    app.authz.require(p, &s.space_id, need).map_err(|e| if e.status == StatusCode::NOT_FOUND { ApiError::not_found("stack") } else { e })?;
+    Ok(s)
+}
+
+/// Load a run and check `p` has at least `need` on its stack's space.
+pub fn authorized_run(app: &AppRef, p: &Principal, id: &str, need: Role) -> ApiResult<Run> {
+    let run = find_run(app, id)?;
+    let space = app
+        .db
+        .read(|c| Ok(c.query_row("SELECT space_id FROM stacks WHERE id = ?1", [&run.stack_id], |r| r.get::<_, String>(0)).ok()))?
+        .ok_or_else(|| ApiError::not_found("run"))?;
+    app.authz.require(p, &space, need).map_err(|e| if e.status == StatusCode::NOT_FOUND { ApiError::not_found("run") } else { e })?;
+    Ok(run)
 }
 
 pub fn find_run(app: &AppRef, id: &str) -> ApiResult<Run> {
@@ -69,24 +84,6 @@ pub struct SpaceQ {
 
 // ---------------------------------------------------------------- misc
 
-pub async fn whoami() -> Json<Value> {
-    Json(json!({"subject": "token", "role": "admin"}))
-}
-
-#[derive(Deserialize)]
-pub struct NewTokenReq {
-    #[serde(default)]
-    description: String,
-}
-
-pub async fn create_token(State(app): State<AppRef>, Json(req): Json<NewTokenReq>) -> ApiResult<impl IntoResponse> {
-    let token = new_token();
-    let sha = sha256_hex(token.as_bytes());
-    let id = app.db.write(|c| store::insert_token(c, &sha, &req.description))?;
-    app.tokens.write().unwrap().insert(sha);
-    Ok((StatusCode::CREATED, Json(json!({"id": id, "token": token, "description": req.description}))))
-}
-
 pub async fn metrics(State(app): State<AppRef>) -> impl IntoResponse {
     use std::fmt::Write;
     use std::sync::atomic::Ordering;
@@ -110,24 +107,6 @@ pub async fn metrics(State(app): State<AppRef>) -> impl IntoResponse {
 }
 
 // ---------------------------------------------------------------- spaces
-
-pub async fn list_spaces(State(app): State<AppRef>) -> ApiResult<Json<Value>> {
-    let items = app.db.read(store::list_spaces)?;
-    Ok(Json(json!({ "items": items })))
-}
-
-#[derive(Deserialize)]
-pub struct NewSpace {
-    name: String,
-    #[serde(default)]
-    email: String,
-}
-
-pub async fn create_space(State(app): State<AppRef>, Json(req): Json<NewSpace>) -> ApiResult<impl IntoResponse> {
-    valid_name(&req.name)?;
-    let s = app.db.write(|c| store::create_space(c, &req.name, &req.email))?;
-    Ok((StatusCode::CREATED, Json(s)))
-}
 
 pub fn valid_name(n: &str) -> ApiResult<()> {
     if n.is_empty() || n.len() > 90 || !n.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.') {
@@ -160,11 +139,13 @@ fn json_bytes<T: Serialize>(v: &T, capacity: usize) -> Response {
     }
 }
 
-pub async fn list_stacks(State(app): State<AppRef>, Query(q): Query<ListQ>) -> ApiResult<Response> {
+pub async fn list_stacks(State(app): State<AppRef>, p: Principal, Query(q): Query<ListQ>) -> ApiResult<Response> {
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    // Computed once per request (never per row).
+    let allowed = app.authz.readable_spaces(&p).map(|s| serde_json::to_string(&s.into_iter().collect::<Vec<_>>()).unwrap_or_default());
     let items = app
         .db
-        .read(|c| store::list_stacks(c, q.space.as_deref(), q.after.as_deref().unwrap_or(""), limit))?;
+        .read(|c| store::list_stacks(c, q.space.as_deref(), q.after.as_deref().unwrap_or(""), limit, allowed.as_deref()))?;
     let next = (items.len() as i64 == limit).then(|| items.last().map(|s| format!("{}/{}", s.space, s.name))).flatten();
     Ok(json_bytes(&Page { items, next }, 512 + limit as usize * 600))
 }
@@ -186,15 +167,21 @@ pub struct NewStackReq {
     labels: Vec<String>,
 }
 
-pub async fn create_stack(State(app): State<AppRef>, Json(r): Json<NewStackReq>) -> ApiResult<impl IntoResponse> {
+pub async fn create_stack(State(app): State<AppRef>, p: Principal, Json(r): Json<NewStackReq>) -> ApiResult<impl IntoResponse> {
     valid_name(&r.name)?;
     let space_name = r.space.as_deref().unwrap_or(DEFAULT_SPACE);
+    let space = match app.db.read(|c| store::space_by_name(c, space_name))? {
+        Some(s) => s,
+        None if space_name == DEFAULT_SPACE => {
+            app.authz.require_site_admin(&p)?;
+            let s = app.db.write(|c| store::create_space(c, DEFAULT_SPACE, "", None))?;
+            app.authz.reload(&app.db)?;
+            s
+        }
+        None => return Err(ApiError::not_found("space")),
+    };
+    app.authz.require(&p, &space.id, Role::Admin)?;
     let id = app.db.write(|c| {
-        let space = match store::space_by_name(c, space_name)? {
-            Some(s) => s,
-            None if space_name == DEFAULT_SPACE => store::create_space(c, DEFAULT_SPACE, "")?,
-            None => anyhow::bail!("space {space_name} not found"),
-        };
         store::create_stack(
             c,
             &store::NewStack {
@@ -208,12 +195,12 @@ pub async fn create_stack(State(app): State<AppRef>, Json(r): Json<NewStackReq>)
             },
         )
     })?;
-    let s = find_stack(&app, &id, None)?;
+    let s = find_stack(&app, &p, &id, None, Role::Reader)?;
     Ok((StatusCode::CREATED, Json(s)))
 }
 
-pub async fn get_stack(State(app): State<AppRef>, Path(id): Path<String>, Query(q): Query<SpaceQ>) -> ApiResult<Json<Stack>> {
-    Ok(Json(find_stack(&app, &id, q.space.as_deref())?))
+pub async fn get_stack(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, Query(q): Query<SpaceQ>) -> ApiResult<Json<Stack>> {
+    Ok(Json(find_stack(&app, &p, &id, q.space.as_deref(), Role::Reader)?))
 }
 
 #[derive(Deserialize)]
@@ -235,13 +222,13 @@ mod double_option {
 }
 
 pub async fn patch_stack(
-    State(app): State<AppRef>,
+    State(app): State<AppRef>, p: Principal,
     Path(id): Path<String>,
     Query(q): Query<SpaceQ>,
-    Json(p): Json<PatchStackReq>,
+    Json(patch): Json<PatchStackReq>,
 ) -> ApiResult<Json<Stack>> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
-    if let Some(n) = &p.name {
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Admin)?;
+    if let Some(n) = &patch.name {
         valid_name(n)?;
     }
     app.db.write(|c| {
@@ -249,20 +236,20 @@ pub async fn patch_stack(
             c,
             &s.id,
             &store::StackPatch {
-                name: p.name,
-                description: p.description,
-                engine_version: p.engine_version,
-                auto_apply: p.auto_apply,
-                project_root: p.project_root,
-                labels: p.labels,
+                name: patch.name,
+                description: patch.description,
+                engine_version: patch.engine_version,
+                auto_apply: patch.auto_apply,
+                project_root: patch.project_root,
+                labels: patch.labels,
             },
         )
     })?;
-    Ok(Json(find_stack(&app, &s.id, None)?))
+    Ok(Json(find_stack(&app, &p, &s.id, None, Role::Reader)?))
 }
 
-pub async fn delete_stack(State(app): State<AppRef>, Path(id): Path<String>, Query(q): Query<SpaceQ>) -> ApiResult<StatusCode> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
+pub async fn delete_stack(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, Query(q): Query<SpaceQ>) -> ApiResult<StatusCode> {
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Admin)?;
     let busy = app.db.read(store::active_runs)?.into_iter().any(|r| r.stack_id == s.id);
     if busy {
         return Err(ApiError::conflict("stack has active runs; cancel or discard them first"));
@@ -278,12 +265,12 @@ pub struct LockReq {
 }
 
 pub async fn lock_stack(
-    State(app): State<AppRef>,
+    State(app): State<AppRef>, p: Principal,
     Path(id): Path<String>,
     Query(q): Query<SpaceQ>,
     body: Option<Json<LockReq>>,
 ) -> ApiResult<Json<Stack>> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Writer)?;
     let note = body.map(|b| b.0.note).unwrap_or_default();
     let lock_id = format!("manual-{}", crate::util::new_id("lck"));
     let info = json!({"ID": lock_id, "Who": "cairn user", "Info": note, "Operation": "manual", "Created": crate::util::now()});
@@ -292,7 +279,7 @@ pub async fn lock_stack(
         e.detail = Some(h);
         return Err(e);
     }
-    Ok(Json(find_stack(&app, &s.id, None)?))
+    Ok(Json(find_stack(&app, &p, &s.id, None, Role::Reader)?))
 }
 
 #[derive(Deserialize)]
@@ -302,20 +289,20 @@ pub struct UnlockQ {
     force: bool,
 }
 
-pub async fn unlock_stack(State(app): State<AppRef>, Path(id): Path<String>, Query(q): Query<UnlockQ>) -> ApiResult<Json<Stack>> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
+pub async fn unlock_stack(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, Query(q): Query<UnlockQ>) -> ApiResult<Json<Stack>> {
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Writer)?;
     let manual = s.lock_id.as_deref().map(|l| l.starts_with("manual-")).unwrap_or(true);
     if !manual && !q.force {
         return Err(ApiError::conflict("stack is locked by a run or a tofu client; pass force=true to override"));
     }
     app.db.write(|c| store::unlock_stack(c, &s.id, None))?;
-    Ok(Json(find_stack(&app, &s.id, None)?))
+    Ok(Json(find_stack(&app, &p, &s.id, None, Role::Reader)?))
 }
 
 // ---------------------------------------------------------------- variables
 
-pub async fn list_vars(State(app): State<AppRef>, Path(id): Path<String>, Query(q): Query<SpaceQ>) -> ApiResult<Json<Value>> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
+pub async fn list_vars(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, Query(q): Query<SpaceQ>) -> ApiResult<Json<Value>> {
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Reader)?;
     let mut vars = app.db.read(|c| store::list_variables(c, &s.id))?;
     for v in &mut vars {
         if v.sensitive {
@@ -342,12 +329,12 @@ fn default_category() -> String {
 }
 
 pub async fn set_var(
-    State(app): State<AppRef>,
+    State(app): State<AppRef>, p: Principal,
     Path(id): Path<String>,
     Query(q): Query<SpaceQ>,
     Json(r): Json<VarReq>,
 ) -> ApiResult<impl IntoResponse> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Writer)?;
     if !matches!(r.category.as_str(), "terraform" | "env") {
         return Err(ApiError::bad_request("category must be 'terraform' or 'env'"));
     }
@@ -368,11 +355,11 @@ pub struct DelVarQ {
 }
 
 pub async fn delete_var(
-    State(app): State<AppRef>,
+    State(app): State<AppRef>, p: Principal,
     Path((id, key)): Path<(String, String)>,
     Query(q): Query<DelVarQ>,
 ) -> ApiResult<StatusCode> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Writer)?;
     if app.db.write(|c| store::delete_variable(c, &s.id, &key, q.category.as_deref()))? {
         Ok(StatusCode::NO_CONTENT)
     } else {
@@ -411,12 +398,12 @@ pub fn enqueue_run(app: &AppRef, stack: &Stack, kind: &str, config_id: &str, aut
 }
 
 pub async fn upload_config(
-    State(app): State<AppRef>,
+    State(app): State<AppRef>, p: Principal,
     Path(id): Path<String>,
     Query(q): Query<SpaceQ>,
     body: Bytes,
 ) -> ApiResult<impl IntoResponse> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Planner)?;
     let cv = app.db.write(|c| store::create_config(c, &s.id, false, false))?;
     save_config(&app, &cv.id, &body)?;
     let cv = app.db.read(|c| store::get_config(c, &cv.id))?;
@@ -443,12 +430,13 @@ pub struct RunReq {
 /// Create a run. JSON body `{kind, config_id}`, or a `.tar.gz` body (upload + run in one request).
 pub async fn create_run(
     State(app): State<AppRef>,
+    p: Principal,
     Path(id): Path<String>,
     Query(q): Query<RunQ>,
     headers: HeaderMap,
     body: Bytes,
 ) -> ApiResult<impl IntoResponse> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Planner)?;
     let is_json = headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
@@ -462,6 +450,9 @@ pub async fn create_run(
     let kind = req.kind.as_deref().unwrap_or("tracked");
     if !matches!(kind, "proposed" | "tracked") {
         return Err(ApiError::bad_request("kind must be 'proposed' or 'tracked'"));
+    }
+    if kind != "proposed" {
+        app.authz.require(&p, &s.space_id, Role::Writer)?;
     }
     let cv_id = if is_json {
         match req.config_id {
@@ -478,7 +469,7 @@ pub async fn create_run(
         return Err(ApiError::bad_request("configuration is not uploaded for this stack"));
     }
     let auto = req.auto_apply.unwrap_or(s.auto_apply);
-    let run = enqueue_run(&app, &s, kind, &cv.id, auto, &req.message, "api")?;
+    let run = enqueue_run(&app, &s, kind, &cv.id, auto, &req.message, &p.label())?;
     Ok((StatusCode::CREATED, Json(run_view(run))))
 }
 
@@ -501,8 +492,8 @@ pub struct RunsQ {
     before: Option<i64>,
 }
 
-pub async fn list_runs(State(app): State<AppRef>, Path(id): Path<String>, Query(q): Query<RunsQ>) -> ApiResult<Response> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
+pub async fn list_runs(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, Query(q): Query<RunsQ>) -> ApiResult<Response> {
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Reader)?;
     let limit = q.limit.unwrap_or(20).clamp(1, 200);
     let runs = app.db.read(|c| store::list_runs(c, &s.id, q.before.unwrap_or(i64::MAX), limit))?;
     let next = (runs.len() as i64 == limit).then(|| runs.last().map(|r| r.seq)).flatten();
@@ -521,9 +512,9 @@ pub struct WaitQ {
     wait: Option<f64>,
 }
 
-pub async fn get_run(State(app): State<AppRef>, Path(id): Path<String>, Query(q): Query<WaitQ>) -> ApiResult<Json<RunView>> {
+pub async fn get_run(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, Query(q): Query<WaitQ>) -> ApiResult<Json<RunView>> {
     let mut rx = app.hub.events.subscribe();
-    let run = find_run(&app, &id)?;
+    let run = authorized_run(&app, &p, &id, Role::Reader)?;
     let wait = q.wait.unwrap_or(0.0).clamp(0.0, 60.0);
     if wait > 0.0 && !run.is_resting() {
         let initial = run.status.clone();
@@ -541,14 +532,14 @@ pub async fn get_run(State(app): State<AppRef>, Path(id): Path<String>, Query(q)
     Ok(Json(run_view(run)))
 }
 
-pub async fn run_plan(State(app): State<AppRef>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    let run = find_run(&app, &id)?;
+pub async fn run_plan(State(app): State<AppRef>, p: Principal, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let run = authorized_run(&app, &p, &id, Role::Reader)?;
     let summary = run.plan_summary.as_deref().and_then(|s| serde_json::from_str(s).ok()).unwrap_or(Value::Null);
     Ok(Json(json!({"run_id": run.id, "status": run.status, "has_changes": run.has_changes, "summary": summary})))
 }
 
-pub async fn confirm_run(State(app): State<AppRef>, Path(id): Path<String>) -> ApiResult<Json<RunView>> {
-    let run = find_run(&app, &id)?;
+pub async fn confirm_run(State(app): State<AppRef>, p: Principal, Path(id): Path<String>) -> ApiResult<Json<RunView>> {
+    let run = authorized_run(&app, &p, &id, Role::Writer)?;
     if !app.db.write(|c| store::transition(c, &run.id, &["planned"], "apply_queued"))? {
         return Err(ApiError::conflict(format!("run is {}, only planned runs can be confirmed", run.status)));
     }
@@ -557,8 +548,8 @@ pub async fn confirm_run(State(app): State<AppRef>, Path(id): Path<String>) -> A
     Ok(Json(run_view(find_run(&app, &id)?)))
 }
 
-pub async fn discard_run(State(app): State<AppRef>, Path(id): Path<String>) -> ApiResult<Json<RunView>> {
-    let run = find_run(&app, &id)?;
+pub async fn discard_run(State(app): State<AppRef>, p: Principal, Path(id): Path<String>) -> ApiResult<Json<RunView>> {
+    let run = authorized_run(&app, &p, &id, Role::Writer)?;
     let ok = app.db.write(|c| {
         let ok = store::transition(c, &run.id, &["planned"], "discarded")?;
         if ok {
@@ -576,8 +567,11 @@ pub async fn discard_run(State(app): State<AppRef>, Path(id): Path<String>) -> A
     Ok(Json(run_view(find_run(&app, &id)?)))
 }
 
-pub async fn cancel_run(State(app): State<AppRef>, Path(id): Path<String>) -> ApiResult<Json<RunView>> {
-    let run = find_run(&app, &id)?;
+pub async fn cancel_run(State(app): State<AppRef>, p: Principal, Path(id): Path<String>) -> ApiResult<Json<RunView>> {
+    let run = authorized_run(&app, &p, &id, Role::Planner)?;
+    if run.kind != "proposed" {
+        authorized_run(&app, &p, &id, Role::Writer)?;
+    }
     // Not started yet: cancel directly. Executing: signal the runner.
     let queued = app.db.write(|c| {
         let ok = store::transition(c, &run.id, &["plan_queued", "apply_queued"], "canceled")?;
@@ -607,8 +601,8 @@ pub struct LogQ {
 /// Run log as JSON lines. With `follow=true` the response streams until the
 /// run rests (finishes or waits for confirmation); if the next phase hasn't
 /// started yet, it waits for it.
-pub async fn run_logs(State(app): State<AppRef>, Path(id): Path<String>, Query(q): Query<LogQ>) -> ApiResult<Response> {
-    let run = find_run(&app, &id)?;
+pub async fn run_logs(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, Query(q): Query<LogQ>) -> ApiResult<Response> {
+    let run = authorized_run(&app, &p, &id, Role::Reader)?;
     let ctype = [(header::CONTENT_TYPE, "application/x-ndjson")];
     // Subscribe before checking anything so no transition is missed.
     let mut events = app.hub.events.subscribe();
@@ -667,8 +661,11 @@ pub struct OutQ {
     sensitive: bool,
 }
 
-pub async fn outputs(State(app): State<AppRef>, Path(id): Path<String>, Query(q): Query<OutQ>) -> ApiResult<Json<Value>> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
+pub async fn outputs(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, Query(q): Query<OutQ>) -> ApiResult<Json<Value>> {
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Reader)?;
+    if q.sensitive {
+        app.authz.require(&p, &s.space_id, Role::Writer)?;
+    }
     let sv = app.db.read(|c| store::current_state(c, &s.id))?;
     let mut outs = sv.map(|v| v.outputs).unwrap_or_else(|| json!({}));
     if !q.sensitive {
@@ -683,15 +680,15 @@ pub async fn outputs(State(app): State<AppRef>, Path(id): Path<String>, Query(q)
     Ok(Json(outs))
 }
 
-pub async fn state_versions(State(app): State<AppRef>, Path(id): Path<String>, Query(q): Query<SpaceQ>) -> ApiResult<Json<Value>> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
+pub async fn state_versions(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, Query(q): Query<SpaceQ>) -> ApiResult<Json<Value>> {
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Reader)?;
     let items = app.db.read(|c| store::list_states(c, &s.id, 100))?;
     Ok(Json(json!({ "items": items })))
 }
 
 /// HTTP-backend GET: the current state document (204 when there is none).
-pub async fn state_get(State(app): State<AppRef>, Path(id): Path<String>, Query(q): Query<SpaceQ>) -> ApiResult<Response> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
+pub async fn state_get(State(app): State<AppRef>, p: Principal, Path(id): Path<String>, Query(q): Query<SpaceQ>) -> ApiResult<Response> {
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Writer)?;
     match app.db.read(|c| store::current_state(c, &s.id))? {
         Some(sv) => {
             let bytes = tokio::fs::read(app.dir("blobs/state").join(format!("{}.json", sv.sha256)))
@@ -713,12 +710,12 @@ pub struct StatePostQ {
 /// HTTP-backend POST: store a new state version. If the stack is locked, the
 /// caller must present the lock ID (`?ID=`), as tofu does.
 pub async fn state_post(
-    State(app): State<AppRef>,
+    State(app): State<AppRef>, p: Principal,
     Path(id): Path<String>,
     Query(q): Query<StatePostQ>,
     body: Bytes,
 ) -> ApiResult<StatusCode> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Writer)?;
     if let Some(held) = &s.lock_id {
         if q.lock_id.as_deref() != Some(held.as_str()) {
             return Err(ApiError::new(StatusCode::LOCKED, "stack is locked by someone else"));
@@ -761,12 +758,12 @@ pub async fn state_post(
 
 /// HTTP-backend LOCK (sent as POST to `/state/lock`, configure `lock_method = "POST"`).
 pub async fn state_lock(
-    State(app): State<AppRef>,
+    State(app): State<AppRef>, p: Principal,
     Path(id): Path<String>,
     Query(q): Query<SpaceQ>,
     Json(info): Json<Value>,
 ) -> ApiResult<Response> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Writer)?;
     let lock_id = info["ID"].as_str().ok_or_else(|| ApiError::bad_request("lock info needs an ID"))?.to_string();
     match app.db.write(|c| store::try_lock_stack(c, &s.id, &lock_id, &info))? {
         Ok(()) => Ok(StatusCode::OK.into_response()),
@@ -777,12 +774,12 @@ pub async fn state_lock(
 
 /// HTTP-backend UNLOCK (DELETE `/state/lock`, configure `unlock_method = "DELETE"`).
 pub async fn state_unlock(
-    State(app): State<AppRef>,
+    State(app): State<AppRef>, p: Principal,
     Path(id): Path<String>,
     Query(q): Query<SpaceQ>,
     body: Bytes,
 ) -> ApiResult<StatusCode> {
-    let s = find_stack(&app, &id, q.space.as_deref())?;
+    let s = find_stack(&app, &p, &id, q.space.as_deref(), Role::Writer)?;
     let lock_id = serde_json::from_slice::<Value>(&body).ok().and_then(|v| v["ID"].as_str().map(String::from));
     if app.db.write(|c| store::unlock_stack(c, &s.id, lock_id.as_deref()))? || s.lock_id.is_none() {
         Ok(StatusCode::OK)
@@ -799,10 +796,22 @@ pub struct EventsQ {
     run: Option<String>,
 }
 
-pub async fn events(State(app): State<AppRef>, Query(q): Query<EventsQ>) -> impl IntoResponse {
+pub async fn events(State(app): State<AppRef>, p: Principal, Query(q): Query<EventsQ>) -> impl IntoResponse {
     let rx = app.hub.events.subscribe();
+    let allowed = app.authz.readable_spaces(&p);
+    let app2 = app.clone();
     let stream = BroadcastStream::new(rx).filter_map(move |e| {
         let e = e.ok()?;
+        if let Some(allowed) = &allowed {
+            let space: Option<String> = app2
+                .db
+                .read(|c| Ok(c.query_row("SELECT space_id FROM stacks WHERE id = ?1", [&e.stack_id], |r| r.get(0)).ok()))
+                .ok()
+                .flatten();
+            if !space.map(|s| allowed.contains(&s)).unwrap_or(false) {
+                return None;
+            }
+        }
         if q.stack.as_deref().map(|s| s != e.stack_id).unwrap_or(false) {
             return None;
         }

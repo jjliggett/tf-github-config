@@ -1,5 +1,6 @@
 //! HTTP routing and authentication.
 
+pub mod identity;
 pub mod native;
 pub mod tfe;
 
@@ -14,30 +15,51 @@ use crate::app::{token_from, ApiError, AppRef};
 
 /// Paths reachable without a token.
 fn is_public(path: &str) -> bool {
-    matches!(path, "/healthz" | "/readyz" | "/metrics" | "/.well-known/terraform.json" | "/api/v2/ping")
+    matches!(path, "/healthz" | "/readyz" | "/metrics" | "/.well-known/terraform.json" | "/api/v2/ping"
+        | "/auth/login" | "/auth/callback" | "/auth/config")
         // Pre-signed (checked in the handler).
         || (path.starts_with("/api/v2/configuration-versions/") && path.ends_with("/upload"))
 }
 
-async fn auth(State(app): State<AppRef>, req: Request, next: Next) -> Response {
+async fn auth(State(app): State<AppRef>, mut req: Request, next: Next) -> Response {
     app.count_request();
-    if !is_public(req.uri().path()) {
-        let ok = token_from(req.headers()).map(|t| app.check_token(&t)).unwrap_or(false);
-        if !ok {
-            let mut r = ApiError::new(StatusCode::UNAUTHORIZED, "missing or invalid token").into_response();
-            r.headers_mut().insert("WWW-Authenticate", "Bearer realm=\"cairn\"".parse().unwrap());
-            return r;
-        }
+    let path = req.uri().path().to_string();
+    if is_public(&path) {
+        return next.run(req).await;
     }
-    next.run(req).await
+    let principal = match token_from(req.headers()) {
+        Some(t) => app.principal(&t).await,
+        None => None,
+    };
+    let Some(principal) = principal else {
+        let mut r = ApiError::new(StatusCode::UNAUTHORIZED, "missing or invalid token").into_response();
+        r.headers_mut().insert("WWW-Authenticate", "Bearer realm=\"cairn\"".parse().unwrap());
+        return r;
+    };
+    let method = req.method().clone();
+    let who = principal.label();
+    req.extensions_mut().insert(principal);
+    let resp = next.run(req).await;
+    // Audit every mutation (not reads, not the high-volume state lock/unlock pairs' bodies).
+    if method != axum::http::Method::GET && method != axum::http::Method::HEAD {
+        let status = resp.status().as_u16();
+        let _ = app.db.write(|c| crate::auth::audit(c, &who, method.as_str(), &path, status));
+    }
+    resp
 }
 
 pub fn router(app: AppRef) -> Router {
     use native as n;
     let v1 = Router::new()
-        .route("/whoami", get(n::whoami))
-        .route("/tokens", post(n::create_token))
-        .route("/spaces", get(n::list_spaces).post(n::create_space))
+        .route("/whoami", get(identity::whoami))
+        .route("/tokens", get(identity::list_tokens).post(identity::create_token))
+        .route("/tokens/{id}", axum::routing::delete(identity::delete_token))
+        .route("/spaces", get(identity::list_spaces).post(identity::create_space))
+        .route("/spaces/{space}", get(identity::get_space).delete(identity::delete_space))
+        .route("/spaces/{space}/roles", get(identity::list_roles).post(identity::put_role))
+        .route("/spaces/{space}/roles/{id}", axum::routing::delete(identity::delete_role))
+        .route("/users", get(identity::list_users))
+        .route("/audit", get(identity::audit))
         .route("/stacks", get(n::list_stacks).post(n::create_stack))
         .route("/stacks/{id}", get(n::get_stack).patch(n::patch_stack).delete(n::delete_stack))
         .route("/stacks/{id}/lock", post(n::lock_stack).delete(n::unlock_stack))
@@ -87,6 +109,9 @@ pub fn router(app: AppRef) -> Router {
         .route("/readyz", get(|| async { "ok" }))
         .route("/metrics", get(n::metrics))
         .route("/.well-known/terraform.json", get(tfe::well_known))
+        .route("/auth/config", get(identity::auth_config))
+        .route("/auth/login", get(identity::login))
+        .route("/auth/callback", get(identity::callback))
         .nest("/api/v1", v1)
         .nest("/api/v2", v2)
         .layer(DefaultBodyLimit::max(100 << 20))

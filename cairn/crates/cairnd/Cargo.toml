@@ -12,10 +12,12 @@ default = ["download"]
 mimalloc = ["dep:mimalloc"]
 # Download OpenTofu releases (checksum-verified) when a stack asks for a version
 # that is not cached. Without it, engines must be pre-seeded or on PATH.
-download = ["dep:ureq", "dep:zip"]
+download = ["dep:zip"]
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
 bytes = "1"
 chacha20poly1305 = "0.10"
@@ -33,7 +35,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "proces
 tokio-stream = { version = "0.1", features = ["sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "std"] }
-ureq = { version = "2", optional = true }
+ureq = { version = "2", features = ["json"] }
 zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
 
 [dev-dependencies]

@@ -15,6 +15,8 @@ pub struct Space {
     pub id: String,
     pub name: String,
     pub email: String,
+    pub parent_id: Option<String>,
+    pub description: String,
     pub created_at: String,
 }
 
@@ -125,25 +127,45 @@ pub struct Variable {
 // ---------------------------------------------------------------- spaces
 
 fn space_row(r: &Row) -> rusqlite::Result<Space> {
-    Ok(Space { id: r.get(0)?, name: r.get(1)?, email: r.get(2)?, created_at: r.get(3)? })
+    Ok(Space {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        email: r.get(2)?,
+        parent_id: r.get(3)?,
+        description: r.get(4)?,
+        created_at: r.get(5)?,
+    })
 }
 
-pub fn create_space(c: &Connection, name: &str, email: &str) -> Result<Space> {
-    let s = Space { id: new_id("spc"), name: name.into(), email: email.into(), created_at: now() };
+const SPACE_COLS: &str = "id, name, email, parent_id, description, created_at";
+
+pub fn create_space(c: &Connection, name: &str, email: &str, parent_id: Option<&str>) -> Result<Space> {
+    let s = Space {
+        id: new_id("spc"),
+        name: name.into(),
+        email: email.into(),
+        parent_id: parent_id.map(String::from),
+        description: String::new(),
+        created_at: now(),
+    };
     c.execute(
-        "INSERT INTO spaces (id, name, email, created_at) VALUES (?1, ?2, ?3, ?4)",
-        params![s.id, s.name, s.email, s.created_at],
+        "INSERT INTO spaces (id, name, email, parent_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![s.id, s.name, s.email, s.parent_id, s.created_at],
     )?;
     Ok(s)
 }
 
 pub fn space_by_name(c: &Connection, name: &str) -> Result<Option<Space>> {
-    Ok(c.query_row("SELECT id, name, email, created_at FROM spaces WHERE name = ?1", [name], space_row)
+    Ok(c.query_row(&format!("SELECT {SPACE_COLS} FROM spaces WHERE name = ?1 OR id = ?1"), [name], space_row)
         .optional()?)
 }
 
+pub fn delete_space(c: &Connection, id: &str) -> Result<bool> {
+    Ok(c.execute("DELETE FROM spaces WHERE id = ?1", [id])? > 0)
+}
+
 pub fn list_spaces(c: &Connection) -> Result<Vec<Space>> {
-    let mut st = c.prepare_cached("SELECT id, name, email, created_at FROM spaces ORDER BY name")?;
+    let mut st = c.prepare_cached(&format!("SELECT {SPACE_COLS} FROM spaces ORDER BY name"))?;
     let rows = st.query_map([], space_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
 }
@@ -213,14 +235,16 @@ pub fn stack_by_name(c: &Connection, space: &str, name: &str) -> Result<Option<S
 }
 
 /// One page of stacks ordered by name. `after` is the last name of the previous page.
-pub fn list_stacks(c: &Connection, space: Option<&str>, after: &str, limit: i64) -> Result<Vec<Stack>> {
+/// `allowed`: JSON array of readable space IDs (`None` = all).
+pub fn list_stacks(c: &Connection, space: Option<&str>, after: &str, limit: i64, allowed: Option<&str>) -> Result<Vec<Stack>> {
     let sql = format!(
         "SELECT {STACK_COLS} FROM stacks s JOIN spaces sp ON sp.id = s.space_id
          WHERE (?1 IS NULL OR sp.name = ?1) AND (sp.name || '/' || s.name) > ?2
+           AND (?4 IS NULL OR s.space_id IN (SELECT value FROM json_each(?4)))
          ORDER BY sp.name, s.name LIMIT ?3"
     );
     let mut st = c.prepare_cached(&sql)?;
-    let rows = st.query_map(params![space, after, limit], stack_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+    let rows = st.query_map(params![space, after, limit, allowed], stack_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
 }
 
@@ -549,23 +573,6 @@ pub fn delete_variable(c: &Connection, stack_id: &str, key: &str, category: Opti
         "DELETE FROM variables WHERE stack_id = ?1 AND (key = ?2 OR id = ?2) AND (?3 IS NULL OR category = ?3)",
         params![stack_id, key, category],
     )? > 0)
-}
-
-// ---------------------------------------------------------------- tokens
-
-pub fn insert_token(c: &Connection, sha: &str, description: &str) -> Result<String> {
-    let id = new_id("tok");
-    c.execute(
-        "INSERT INTO tokens (id, sha256, description, created_at) VALUES (?1, ?2, ?3, ?4)",
-        params![id, sha, description, now()],
-    )?;
-    Ok(id)
-}
-
-pub fn token_hashes(c: &Connection) -> Result<Vec<String>> {
-    let mut st = c.prepare("SELECT sha256 FROM tokens")?;
-    let rows = st.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
 }
 
 /// Page-number pagination for the TFE API (`page[number]`, `page[size]`, `search[name]`).

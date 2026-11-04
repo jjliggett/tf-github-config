@@ -2,15 +2,18 @@
 
 mod api;
 mod app;
+mod auth;
 mod crypto;
 mod db;
 mod engine;
 mod events;
+mod http;
+mod oidc;
 mod runner;
 mod store;
 mod util;
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -72,7 +75,7 @@ async fn serve(cfg: app::Config, cpus: usize, started: Instant) -> Result<()> {
         std::fs::create_dir_all(cfg.data.join(sub)).with_context(|| format!("creating {}", cfg.data.display()))?;
     }
     let db = db::Db::open(&cfg.data.join("cairn.db"), cpus.min(4))?;
-    let tokens = app::load_tokens(&db)?;
+    let authz = auth::Authz::load(&db)?;
     let secrets = crypto::SecretBox::load(&cfg.data, cfg.secret_key.as_deref())?;
     let engines = engine::Engines::new(
         cfg.data.join("engines"),
@@ -84,9 +87,20 @@ async fn serve(cfg: app::Config, cpus: usize, started: Instant) -> Result<()> {
     let concurrency = cfg.concurrency.unwrap_or(cpus.max(2)).max(1);
     let mut url_key = [0u8; 32];
     util::random_bytes(&mut url_key);
-    if cfg.site_token.is_none() && tokens.is_empty() {
-        tracing::warn!("no CAIRN_SITE_TOKEN and no API tokens: set CAIRN_SITE_TOKEN to be able to log in");
+    if cfg.site_token.is_none() && authz.snapshot().tokens.is_empty() && cfg.oidc_issuer.is_none() {
+        tracing::warn!("no CAIRN_SITE_TOKEN, API tokens or OIDC issuer: nobody can log in");
     }
+    let oidc = cfg.oidc_issuer.as_ref().map(|issuer| {
+        oidc::Oidc::new(oidc::OidcConfig {
+            issuer: issuer.clone(),
+            client_id: cfg.oidc_client_id.clone(),
+            client_secret: cfg.oidc_client_secret.clone(),
+            groups_claim: cfg.oidc_groups_claim.clone(),
+            admin_group: cfg.oidc_admin_group.clone(),
+            scopes: cfg.oidc_scopes.clone(),
+            audiences: cfg.oidc_audiences.clone(),
+        })
+    });
 
     let app = Arc::new(app::App {
         hub: events::Hub::new(cfg.data.join("logs")),
@@ -96,7 +110,8 @@ async fn serve(cfg: app::Config, cpus: usize, started: Instant) -> Result<()> {
         secrets,
         sched: runner::Scheduler::new(concurrency),
         metrics: Default::default(),
-        tokens: RwLock::new(tokens),
+        authz,
+        oidc,
         url_key,
     });
 

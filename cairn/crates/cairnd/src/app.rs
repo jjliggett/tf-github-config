@@ -1,12 +1,11 @@
 //! Shared application state, configuration, auth and API errors.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use clap::Parser;
@@ -56,6 +55,27 @@ pub struct Config {
     /// stack's own `GOGC` env variable wins.
     #[arg(long, env = "CAIRN_ENGINE_GOGC", default_value_t = 50)]
     pub engine_gogc: u32,
+    /// OpenID Connect issuer URL (e.g. https://authentik.example.com/application/o/cairn/).
+    #[arg(long, env = "CAIRN_OIDC_ISSUER")]
+    pub oidc_issuer: Option<String>,
+    #[arg(long, env = "CAIRN_OIDC_CLIENT_ID", default_value = "cairn")]
+    pub oidc_client_id: String,
+    #[arg(long, env = "CAIRN_OIDC_CLIENT_SECRET", hide_env_values = true)]
+    pub oidc_client_secret: Option<String>,
+    /// Claim holding group names; groups match team role bindings by name.
+    #[arg(long, env = "CAIRN_OIDC_GROUPS_CLAIM", default_value = "groups")]
+    pub oidc_groups_claim: String,
+    /// Members of this IdP group are site admins.
+    #[arg(long, env = "CAIRN_OIDC_ADMIN_GROUP")]
+    pub oidc_admin_group: Option<String>,
+    #[arg(long, env = "CAIRN_OIDC_SCOPES", default_value = "openid email profile groups")]
+    pub oidc_scopes: String,
+    /// Extra accepted audiences for bearer ID tokens (comma-separated), e.g. for CI.
+    #[arg(long, env = "CAIRN_OIDC_AUDIENCES", value_delimiter = ',')]
+    pub oidc_audiences: Vec<String>,
+    /// Lifetime of tokens minted by an OIDC login, in hours.
+    #[arg(long, env = "CAIRN_SESSION_HOURS", default_value_t = 12)]
+    pub session_hours: u64,
     /// Tokio worker threads (default: min(CPUs, 4)).
     #[arg(long, env = "CAIRN_WORKERS")]
     pub workers: Option<usize>,
@@ -89,8 +109,9 @@ pub struct App {
     pub secrets: SecretBox,
     pub sched: Scheduler,
     pub metrics: Metrics,
-    /// SHA-256 of every valid API token (loaded at start, updated on create).
-    pub tokens: RwLock<HashSet<String>>,
+    /// Roles, bindings, users and tokens (in-memory snapshot).
+    pub authz: crate::auth::Authz,
+    pub oidc: Option<crate::oidc::Oidc>,
     /// Key for signing pre-authorized upload URLs (process lifetime).
     pub url_key: [u8; 32],
 }
@@ -102,13 +123,39 @@ impl App {
         self.cfg.data.join(sub)
     }
 
-    pub fn check_token(&self, token: &str) -> bool {
+    /// Resolve a bearer credential: site token, Cairn API token, or (with
+    /// OIDC configured) an ID token from the issuer.
+    pub async fn principal(self: &Arc<Self>, token: &str) -> Option<crate::auth::Principal> {
+        use crate::auth::{principal_for_token, principal_for_user, upsert_user, Principal};
         if let Some(site) = &self.cfg.site_token {
             if ct_eq(site.as_bytes(), token.as_bytes()) {
-                return true;
+                return Some(Principal::site());
             }
         }
-        self.tokens.read().unwrap().contains(&sha256_hex(token.as_bytes()))
+        if let Some((t, owner)) = self.authz.token(&sha256_hex(token.as_bytes())) {
+            return Some(principal_for_token(&t, owner));
+        }
+        if self.oidc.is_some() && token.matches('.').count() == 2 {
+            let app = self.clone();
+            let tok = token.to_string();
+            let id = tokio::task::spawn_blocking(move || app.oidc.as_ref().unwrap().verify(&tok)).await.ok()?;
+            let id = match id {
+                Ok(id) => id,
+                Err(e) => {
+                    tracing::debug!("rejected ID token: {e:#}");
+                    return None;
+                }
+            };
+            let (user, changed) = self
+                .db
+                .write(|c| upsert_user(c, &id.subject, &id.email, &id.name, &id.groups, id.site_admin))
+                .ok()?;
+            if changed {
+                let _ = self.authz.reload(&self.db);
+            }
+            return Some(principal_for_user(&user));
+        }
+        None
     }
 
     pub fn sign(&self, what: &str) -> String {
@@ -222,6 +269,4 @@ impl IntoResponse for ApiError {
 
 pub type ApiResult<T> = std::result::Result<T, ApiError>;
 
-pub fn load_tokens(db: &Db) -> Result<HashSet<String>> {
-    Ok(db.read(crate::store::token_hashes)?.into_iter().collect())
-}
+
