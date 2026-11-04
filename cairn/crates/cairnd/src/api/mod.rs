@@ -2,6 +2,7 @@
 
 pub mod identity;
 pub mod native;
+pub mod policies;
 pub mod tfe;
 
 use axum::extract::{DefaultBodyLimit, Request, State};
@@ -59,6 +60,16 @@ pub fn router(app: AppRef) -> Router {
         .route("/spaces/{space}/roles", get(identity::list_roles).post(identity::put_role))
         .route("/spaces/{space}/roles/{id}", axum::routing::delete(identity::delete_role))
         .route("/users", get(identity::list_users))
+        .route("/policies", get(policies::list).post(policies::create))
+        .route("/policies/evaluate", post(policies::evaluate_adhoc))
+        .route("/policies/{id}", get(policies::get).patch(policies::patch).delete(policies::delete))
+        .route("/policies/{id}/evaluate", post(policies::evaluate_stored))
+        .route("/policies/{id}/attach/{stack}", post(policies::attach).delete(policies::detach))
+        .route("/stacks/{id}/policies", get(policies::stack_policies))
+        .route("/runs/{id}/policies", get(policies::run_policies))
+        .route("/runs/{id}/reviews", post(policies::review))
+        .route("/spaces/{space}/webhooks", get(policies::list_webhooks).post(policies::create_webhook))
+        .route("/spaces/{space}/webhooks/{id}", axum::routing::delete(policies::delete_webhook))
         .route("/audit", get(identity::audit))
         .route("/stacks", get(n::list_stacks).post(n::create_stack))
         .route("/stacks/{id}", get(n::get_stack).patch(n::patch_stack).delete(n::delete_stack))

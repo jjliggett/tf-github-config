@@ -91,3 +91,87 @@ uses KMS encryption and you want to read objects directly).
 (rustls); otherwise put Cairn behind a TLS-terminating proxy. OpenTofu needs
 HTTPS for the `cloud {}` block and for registries, so one of the two is
 required for those features.
+
+## Policies
+
+Policies are [Rego](https://www.openpolicyagent.org/docs/latest/policy-language/)
+modules in `package cairn`, evaluated in-process (no OPA sidecar). Each
+policy has a **type** that decides when it runs, what `input` it gets and
+which rules Cairn reads:
+
+| Type | Runs | `input` | Rules read |
+|---|---|---|---|
+| `plan` | After every plan (proposed and tracked) | `plan` (`tofu show -json`), `run`, `stack` | `deny` (set of messages: the run errors), `warn` (logged) |
+| `approval` | After a tracked plan with changes, and after each review | `run` (with plan summary), `stack`, `reviews` | `approve` (every policy must approve), `reject` (any one discards the run) |
+| `login` | On every OIDC login or bearer ID token | `session` (`subject`, `email`, `name`, `groups`, `issuer`) | `deny`, `admin` (site admin), `space_role` (`{"space": "writer"}`) |
+| `notification` | On run events (planned, applied, errored, discarded, canceled) | `event`, `run`, `stack` | `webhook` (set of `{"endpoint_id", "payload"}`) |
+| `push`, `trigger`, `task` | VCS pushes, dependency triggers, task runs | see those sections | `track`/`propose`/`ignore`, `trigger`, `deny` |
+
+**Where they apply.** A policy lives in a space and applies to stacks in
+that space and its children when it is attached explicitly
+(`cairn policy attach`) or carries a label `autoattach:<label>` that matches a
+stack label (`autoattach:*` matches every stack). `login` policies are global
+and only site admins can manage them. Space admins manage the other types.
+
+```rego
+package cairn
+import rego.v1
+
+# plan: no deletions in prod, and flag big changes
+deny contains sprintf("%s would be deleted", [rc.address]) if {
+  some rc in input.plan.resource_changes
+  "delete" in rc.change.actions
+  "prod" in input.stack.labels
+}
+warn contains "more than 20 changes" if count(input.plan.resource_changes) > 20
+```
+
+```rego
+package cairn
+import rego.v1
+
+# approval: two approvals, any rejection wins
+approve if count({r.principal | some r in input.reviews; r.decision == "approve"}) >= 2
+reject if { some r in input.reviews; r.decision == "reject" }
+```
+
+```rego
+package cairn
+import rego.v1
+
+# login: contractors only get read access, platform team gets admin
+deny if not endswith(input.session.email, "@example.com")
+admin if "platform" in input.session.groups
+space_role := {"staging": "writer"} if "contractors" in input.session.groups
+```
+
+A tracked run held by approval policies stops in `planned` with
+`approval: pending`; `confirm` is refused until the policies approve. When
+they approve an auto-apply stack's run it applies by itself; otherwise it
+waits for `confirm` as usual. Evaluations are stored with the run.
+
+```sh
+cairn policy create no-deletes --kind plan --file no-deletes.rego --space prod --label autoattach:*
+cairn policy eval --kind approval --file two-approvals.rego --input review.json   # dry run
+cairn policy attach <policy-id> network --space prod
+cairn run review <run-id> --approve --note "checked the plan"
+cairn run policies <run-id>                         # evaluations and reviews
+```
+
+### Notifications
+
+Webhook endpoints belong to a space and receive events for stacks in it and
+below:
+
+```sh
+cairn webhook create prod https://hooks.example.com/cairn --secret "$SECRET"
+```
+
+Each delivery is a JSON `POST` with `X-Cairn-Event` and, with a secret,
+`X-Cairn-Signature: sha256=<HMAC-SHA256 of the body>`. Failed deliveries are
+retried after 1, 4 and 16 seconds. Without `notification` policies every
+event goes to every endpoint; with them, only what their `webhook` rule
+returns is sent, so they filter and reshape payloads (for example into a
+Matrix, ntfy or Slack message). URLs that resolve to private or loopback
+addresses are refused unless cairnd runs with `--allow-private-webhooks`
+(needed for homelab receivers on the LAN).

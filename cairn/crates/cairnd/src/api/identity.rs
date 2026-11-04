@@ -333,13 +333,12 @@ pub async fn callback(State(app): State<AppRef>, headers: HeaderMap, Query(q): Q
     let token = new_token();
     let sha = sha256_hex(token.as_bytes());
     let expires = now_plus_secs(app.cfg.session_hours * 3600);
-    let user = app.db.write(|c| {
-        let (u, _) = auth::upsert_user(c, &id.subject, &id.email, &id.name, &id.groups, id.site_admin)?;
+    let user = app.login(&id).map_err(|e| ApiError::new(StatusCode::FORBIDDEN, format!("{e:#}")))?;
+    app.db.write(|c| {
         auth::insert_token(
             c,
-            &auth::NewToken { sha: &sha, kind: "user", owner: Some(&u.id), description: "login session", site_admin: false, expires_at: Some(&expires) },
-        )?;
-        Ok(u)
+            &auth::NewToken { sha: &sha, kind: "user", owner: Some(&user.id), description: "login session", site_admin: false, expires_at: Some(&expires) },
+        )
     })?;
     reload(&app)?;
     if let Some(r) = redirect {

@@ -2,6 +2,7 @@
 
 mod client;
 mod identity;
+mod policy;
 mod mcp;
 
 use std::io::{IsTerminal, Write};
@@ -70,6 +71,12 @@ enum Cmd {
         #[arg(long, default_value_t = 50)]
         limit: u32,
     },
+    /// Policies as code (Rego): plan, approval, login, push, trigger, task, notification.
+    #[command(subcommand)]
+    Policy(policy::PolicyCmd),
+    /// Notification webhooks of a space.
+    #[command(subcommand)]
+    Webhook(policy::WebhookCmd),
     /// Stacks: preview, deploy, state, variables, outputs.
     #[command(subcommand)]
     Stack(StackCmd),
@@ -248,6 +255,19 @@ enum RunCmd {
     },
     Discard { id: String },
     Cancel { id: String },
+    /// Approve or reject a run held by approval policies.
+    #[command(group = clap::ArgGroup::new("decision").required(true).args(["approve", "reject"]))]
+    Review {
+        id: String,
+        #[arg(long)]
+        approve: bool,
+        #[arg(long)]
+        reject: bool,
+        #[arg(short, long, default_value = "")]
+        note: String,
+    },
+    /// Policy evaluations and reviews of a run.
+    Policies { id: String },
 }
 
 #[derive(Subcommand)]
@@ -429,6 +449,8 @@ fn dispatch(c: &Client, out: &Out, cmd: &Cmd) -> Result<u8> {
         Cmd::Role(cmd) => identity::role(c, out, cmd)?,
         Cmd::Token(cmd) => identity::token(c, out, cmd)?,
         Cmd::Audit { limit } => identity::audit(c, out, *limit)?,
+        Cmd::Policy(cmd) => policy::policy(c, out, cmd)?,
+        Cmd::Webhook(cmd) => policy::webhook(c, out, cmd)?,
         Cmd::Stack(s) => return stack(c, out, s),
         Cmd::Run(r) => return run_cmd(c, out, r),
     }
@@ -641,6 +663,24 @@ fn run_cmd(c: &Client, out: &Out, cmd: &RunCmd) -> Result<u8> {
         }
         RunCmd::Discard { id } => report(out, &c.send("POST", &format!("/api/v1/runs/{id}/discard"), &json!({}))?),
         RunCmd::Cancel { id } => report(out, &c.send("POST", &format!("/api/v1/runs/{id}/cancel"), &json!({}))?),
+        RunCmd::Review { id, approve, reject: _, note } => {
+            let decision = if *approve { "approve" } else { "reject" };
+            report(out, &c.send("POST", &format!("/api/v1/runs/{id}/reviews"), &json!({"decision": decision, "note": note}))?)
+        }
+        RunCmd::Policies { id } => {
+            let v = c.get(&format!("/api/v1/runs/{id}/policies"))?;
+            if out.json {
+                out.value(&v);
+            } else {
+                println!("approval: {}", v["approval"].as_str().unwrap_or("-"));
+                for e in v["evaluations"].as_array().into_iter().flatten() {
+                    println!("{:<12} {:<24} {}", e["kind"].as_str().unwrap_or(""), e["policy"].as_str().unwrap_or(""), e["result"]);
+                }
+                for r in v["reviews"].as_array().into_iter().flatten() {
+                    println!("review       {:<24} {} {}", r["principal"].as_str().unwrap_or(""), r["decision"].as_str().unwrap_or(""), r["note"].as_str().unwrap_or(""));
+                }
+            }
+        }
     }
     Ok(0)
 }

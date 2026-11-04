@@ -211,6 +211,24 @@ staticPasswords:
         users = self.s.ok("GET", "/api/v1/users")["items"]
         self.assertIn("kilgore@kilgore.trout", [u["email"] for u in users])
 
+    def test_login_policy(self):
+        self.s.ok("POST", "/api/v1/spaces", {"name": "vault"})
+        self.s.ok("POST", "/api/v1/stacks", {"name": "safe", "space": "vault"})
+        tok = self.id_token()
+        self.assertEqual(self.s.req("GET", "/api/v1/stacks/safe?space=vault", token=tok)[0], 404)
+        pol = self.s.ok("POST", "/api/v1/policies", {"name": "vault-writers", "kind": "login", "space": "vault", "body": """package cairn
+import rego.v1
+space_role := {"vault": "writer"} if endswith(input.session.email, "@example.com")
+"""})
+        self.assertEqual(self.s.req("GET", "/api/v1/stacks/safe?space=vault", token=tok)[0], 200)
+        who = self.s.ok("GET", "/api/v1/whoami", token=tok)
+        self.assertEqual(self.s.req("POST", "/api/v1/stacks/safe/variables?space=vault", {"key": "n", "value": "1"}, token=tok)[0],
+                         201, who)
+        self.s.ok("PATCH", f"/api/v1/policies/{pol['id']}", {"body": "package cairn\nimport rego.v1\ndeny if input.session.email == \"admin@example.com\"\n"})
+        self.assertEqual(self.s.req("GET", "/api/v1/whoami", token=tok)[0], 401)
+        self.s.ok("DELETE", f"/api/v1/policies/{pol['id']}")
+        self.assertEqual(self.s.req("GET", "/api/v1/stacks/safe?space=vault", token=tok)[0], 404, "policy roles are gone")
+
     @needs("cairn")
     def test_cli_browser_login(self):
         """`cairn login` without --token: the CLI listens on loopback, we play the browser."""

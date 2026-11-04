@@ -88,6 +88,9 @@ pub struct Config {
     /// Lifetime of tokens minted by an OIDC login, in hours.
     #[arg(long, env = "CAIRN_SESSION_HOURS", default_value_t = 12)]
     pub session_hours: u64,
+    /// Allow notification webhooks to private/loopback addresses (SSRF protection off).
+    #[arg(long, env = "CAIRN_ALLOW_PRIVATE_WEBHOOKS", num_args = 0..=1, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new())]
+    pub allow_private_webhooks: bool,
     /// Tokio worker threads (default: min(CPUs, 4)).
     #[arg(long, env = "CAIRN_WORKERS")]
     pub workers: Option<usize>,
@@ -125,6 +128,9 @@ pub struct App {
     /// Roles, bindings, users and tokens (in-memory snapshot).
     pub authz: crate::auth::Authz,
     pub oidc: Option<crate::oidc::Oidc>,
+    pub policies: crate::policy::PolicyCache,
+    /// Verified bearer ID tokens: sha256 -> (principal, valid until).
+    pub jwt_cache: Mutex<HashMap<String, (crate::auth::Principal, std::time::Instant)>>,
     /// Key for signing pre-authorized upload URLs (process lifetime).
     pub url_key: [u8; 32],
 }
@@ -139,7 +145,7 @@ impl App {
     /// Resolve a bearer credential: site token, Cairn API token, or (with
     /// OIDC configured) an ID token from the issuer.
     pub async fn principal(self: &Arc<Self>, token: &str) -> Option<crate::auth::Principal> {
-        use crate::auth::{principal_for_token, principal_for_user, upsert_user, Principal};
+        use crate::auth::{principal_for_token, principal_for_user, Principal};
         if let Some(site) = &self.cfg.site_token {
             if ct_eq(site.as_bytes(), token.as_bytes()) {
                 return Some(Principal::site());
@@ -149,6 +155,12 @@ impl App {
             return Some(principal_for_token(&t, owner));
         }
         if self.oidc.is_some() && token.matches('.').count() == 2 {
+            let key = sha256_hex(token.as_bytes());
+            if let Some((p, until)) = self.jwt_cache.lock().unwrap().get(&key) {
+                if *until > std::time::Instant::now() {
+                    return Some(p.clone());
+                }
+            }
             let app = self.clone();
             let tok = token.to_string();
             let id = tokio::task::spawn_blocking(move || app.oidc.as_ref().unwrap().verify(&tok)).await.ok()?;
@@ -159,16 +171,66 @@ impl App {
                     return None;
                 }
             };
-            let (user, changed) = self
-                .db
-                .write(|c| upsert_user(c, &id.subject, &id.email, &id.name, &id.groups, id.site_admin))
-                .ok()?;
-            if changed {
-                let _ = self.authz.reload(&self.db);
+            let user = self.login(&id).ok()?;
+            let p = principal_for_user(&user);
+            let mut cache = self.jwt_cache.lock().unwrap();
+            if cache.len() > 10_000 {
+                cache.clear();
             }
-            return Some(principal_for_user(&user));
+            let left = id.exp.saturating_sub(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));
+            cache.insert(key, (p.clone(), std::time::Instant::now() + std::time::Duration::from_secs(left.min(300))));
+            return Some(p);
         }
         None
+    }
+
+    /// Record an OIDC login: apply `login` policies, upsert the user.
+    pub fn login(&self, id: &crate::oidc::Identity) -> anyhow::Result<crate::auth::User> {
+        use crate::auth::{upsert_user, Role};
+        let pols = self.db.read(|c| crate::policy::list(c, Some("login")))?;
+        let mut site_admin = id.site_admin;
+        let mut roles: HashMap<String, Role> = HashMap::new();
+        if !pols.is_empty() {
+            let input = serde_json::json!({"session": {"subject": id.subject, "email": id.email, "name": id.name,
+                                                       "groups": id.groups, "issuer": self.cfg.oidc_issuer}});
+            let verdicts = self.policies.run(&pols, &input)?;
+            if verdicts.iter().any(|v| v.flag("deny")) {
+                anyhow::bail!("login denied by policy");
+            }
+            site_admin |= verdicts.iter().any(|v| v.flag("admin"));
+            let snap = self.authz.snapshot();
+            for v in &verdicts {
+                if let Some(serde_json::Value::Object(m)) = v.result.get("space_role") {
+                    for (space, role) in m {
+                        let sid = snap.spaces.iter().find(|(sid, (name, _))| *sid == space || name == space).map(|(sid, _)| sid.clone());
+                        if let (Some(sid), Some(r)) = (sid, role.as_str().and_then(Role::parse)) {
+                            let e = roles.entry(sid).or_insert(r);
+                            *e = (*e).max(r);
+                        }
+                    }
+                }
+            }
+        }
+        let (user, changed) = self.db.write(|c| upsert_user(c, &id.subject, &id.email, &id.name, &id.groups, site_admin, &roles))?;
+        if changed {
+            self.authz.reload(&self.db)?;
+        }
+        Ok(user)
+    }
+
+    /// A space and all its ancestors (nearest first).
+    pub fn space_chain(&self, space_id: &str) -> Vec<String> {
+        let snap = self.authz.snapshot();
+        let mut out = vec![];
+        let mut cur = Some(space_id.to_string());
+        while let Some(id) = cur {
+            if out.len() > 64 || out.contains(&id) {
+                break;
+            }
+            cur = snap.spaces.get(&id).and_then(|(_, p)| p.clone());
+            out.push(id);
+        }
+        out
     }
 
     pub fn sign(&self, what: &str) -> String {

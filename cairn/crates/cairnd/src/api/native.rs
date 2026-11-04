@@ -65,6 +65,10 @@ pub fn run_view(run: Run) -> RunView {
     let id = run.id.clone();
     let mut next = vec![];
     match run.status.as_str() {
+        "planned" if run.approval.as_deref() == Some("pending") => {
+            next.push(json!({"action": "review", "cli": format!("cairn run review {id} --approve")}));
+            next.push(json!({"action": "discard", "cli": format!("cairn run discard {id}")}));
+        }
         "planned" => {
             next.push(json!({"action": "confirm", "cli": format!("cairn run confirm {id}")}));
             next.push(json!({"action": "discard", "cli": format!("cairn run discard {id}")}));
@@ -560,6 +564,7 @@ pub async fn run_plan(State(app): State<AppRef>, p: Principal, Path(id): Path<St
 
 pub async fn confirm_run(State(app): State<AppRef>, p: Principal, Path(id): Path<String>) -> ApiResult<Json<RunView>> {
     let run = authorized_run(&app, &p, &id, Role::Writer)?;
+    crate::api::policies::confirm_allowed(&app, &run)?;
     if !app.db.write(|c| store::transition(c, &run.id, &["planned"], "apply_queued"))? {
         return Err(ApiError::conflict(format!("run is {}, only planned runs can be confirmed", run.status)));
     }

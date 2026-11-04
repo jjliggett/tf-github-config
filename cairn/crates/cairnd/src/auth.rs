@@ -109,6 +109,8 @@ pub struct User {
     pub site_admin: bool,
     pub created_at: String,
     pub last_seen_at: Option<String>,
+    /// Roles granted by `login` policies at the last login: space ID -> role.
+    pub policy_roles: HashMap<String, Role>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -252,7 +254,7 @@ pub fn principal_for_user(u: &User) -> Principal {
         name: if u.email.is_empty() { u.name.clone() } else { u.email.clone() },
         groups: u.groups.clone(),
         site_admin: u.site_admin,
-        policy_roles: HashMap::new(),
+        policy_roles: u.policy_roles.clone(),
     }
 }
 
@@ -323,10 +325,11 @@ fn user_row(r: &rusqlite::Row) -> rusqlite::Result<User> {
         site_admin: r.get(5)?,
         created_at: r.get(6)?,
         last_seen_at: r.get(7)?,
+        policy_roles: serde_json::from_str(&r.get::<_, String>(8)?).unwrap_or_default(),
     })
 }
 
-const USER_COLS: &str = "id, subject, email, name, groups, site_admin, created_at, last_seen_at";
+const USER_COLS: &str = "id, subject, email, name, groups, site_admin, created_at, last_seen_at, policy_roles";
 
 pub fn list_users(c: &Connection) -> Result<Vec<User>> {
     let mut st = c.prepare(&format!("SELECT {USER_COLS} FROM users ORDER BY email, name"))?;
@@ -342,28 +345,30 @@ pub fn upsert_user(
     name: &str,
     groups: &[String],
     site_admin: bool,
+    policy_roles: &HashMap<String, Role>,
 ) -> Result<(User, bool)> {
     let existing = c
         .query_row(&format!("SELECT {USER_COLS} FROM users WHERE subject = ?1"), [subject], user_row)
         .optional()?;
     let groups_json = serde_json::to_string(groups)?;
+    let roles_json = serde_json::to_string(policy_roles)?;
     let t = now();
     match existing {
         Some(u) => {
-            let changed = u.email != email || u.name != name || u.groups != groups || u.site_admin != site_admin;
+            let changed = u.email != email || u.name != name || u.groups != groups || u.site_admin != site_admin || u.policy_roles != *policy_roles;
             c.execute(
-                "UPDATE users SET email = ?2, name = ?3, groups = ?4, site_admin = ?5, last_seen_at = ?6 WHERE id = ?1",
-                params![u.id, email, name, groups_json, site_admin, t],
+                "UPDATE users SET email = ?2, name = ?3, groups = ?4, site_admin = ?5, last_seen_at = ?6, policy_roles = ?7 WHERE id = ?1",
+                params![u.id, email, name, groups_json, site_admin, t, roles_json],
             )?;
-            let u = User { email: email.into(), name: name.into(), groups: groups.to_vec(), site_admin, last_seen_at: Some(t), ..u };
+            let u = User { email: email.into(), name: name.into(), groups: groups.to_vec(), site_admin, last_seen_at: Some(t), policy_roles: policy_roles.clone(), ..u };
             Ok((u, changed))
         }
         None => {
             let id = new_id("usr");
             c.execute(
-                "INSERT INTO users (id, subject, email, name, groups, site_admin, created_at, last_seen_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-                params![id, subject, email, name, groups_json, site_admin, t],
+                "INSERT INTO users (id, subject, email, name, groups, site_admin, created_at, last_seen_at, policy_roles)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8)",
+                params![id, subject, email, name, groups_json, site_admin, t, roles_json],
             )?;
             let u = User {
                 id,
@@ -374,6 +379,7 @@ pub fn upsert_user(
                 site_admin,
                 created_at: t.clone(),
                 last_seen_at: Some(t),
+                policy_roles: policy_roles.clone(),
             };
             Ok((u, true))
         }

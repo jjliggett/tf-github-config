@@ -9,7 +9,9 @@ mod db;
 mod engine;
 mod events;
 mod http;
+mod notify;
 mod oidc;
+mod policy;
 mod runner;
 mod store;
 mod util;
@@ -119,12 +121,15 @@ async fn serve(cfg: app::Config, cpus: usize, started: Instant) -> Result<()> {
         metrics: Default::default(),
         authz,
         oidc,
+        policies: Default::default(),
+        jwt_cache: Default::default(),
         url_key,
     });
 
     let blob_desc = app.blobs.describe();
     let listener = tokio::net::TcpListener::bind(cfg.listen).await.with_context(|| format!("binding {}", cfg.listen))?;
     tokio::spawn(runner::scheduler_loop(app.clone()));
+    tokio::spawn(notify::sender(app.clone()));
     tracing::info!(
         listen = %cfg.listen,
         data = %cfg.data.display(),

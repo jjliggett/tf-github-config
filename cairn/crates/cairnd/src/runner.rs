@@ -26,6 +26,7 @@ use tokio::sync::{watch, Notify, OwnedSemaphorePermit, Semaphore};
 
 use crate::app::AppRef;
 use crate::events::Event;
+use crate::policy;
 use crate::store::{self, Run, Stack};
 use crate::util::{now, sha256_hex};
 
@@ -236,13 +237,26 @@ impl Exec {
         if code != 0 {
             bail!("tofu init failed (exit {code})");
         }
-        if tracked && self.run.auto_apply {
+        let chain = self.app.space_chain(&self.stack.space_id);
+        let (plan_pols, approval_pols) = self.app.db.read(|c| {
+            Ok((
+                policy::for_stack(c, "plan", &self.stack.id, &chain, &self.stack.labels)?,
+                policy::for_stack(c, "approval", &self.stack.id, &chain, &self.stack.labels)?,
+            ))
+        })?;
+        // The single-process fast path leaves no gap to evaluate policies in.
+        if tracked && self.run.auto_apply && plan_pols.is_empty() && approval_pols.is_empty() {
             return self.plan_and_apply_in_one(&bin, &env, started).await;
         }
         let mut counts = (0i64, 0i64, 0i64);
         let mut changed: Vec<Value> = Vec::new();
         let mut args = vec!["plan", "-input=false", "-json", "-detailed-exitcode"];
-        args.push(if tracked { "-out=.cairn.tfplan" } else { "-lock=false" });
+        if tracked || !plan_pols.is_empty() {
+            args.push("-out=.cairn.tfplan");
+        }
+        if !tracked {
+            args.push("-lock=false");
+        }
         let code = self
             .tofu(&bin, &args, &env, |v| match v["type"].as_str() {
                 Some("change_summary") => {
@@ -265,6 +279,20 @@ impl Exec {
         let run_id = self.run.id.clone();
         self.app.db.write(|c| store::set_plan_result(c, &run_id, has_changes, counts, &summary))?;
         self.app.metrics.phase("plan", started.elapsed().as_secs_f64());
+
+        if !plan_pols.is_empty() {
+            self.check_plan_policies(&bin, &env, &plan_pols, &summary).await?;
+        }
+        if tracked && has_changes && !approval_pols.is_empty() {
+            let sid = self.stack.id.clone();
+            self.app.db.write(|c| {
+                store::set_approval(c, &run_id, "pending")?;
+                store::transition(c, &run_id, &["planning"], "planned")
+            })?;
+            publish(&self.app, &sid, &run_id, "planned");
+            self.log("info", "cairn: waiting for approval policies");
+            return evaluate_approval(&self.app, &run_id).await;
+        }
 
         if !tracked || !has_changes {
             let sid = self.stack.id.clone();
@@ -350,6 +378,45 @@ impl Exec {
             self.log("info", &format!("cairn: saved state version {} (serial {})", sv.id, sv.serial));
         }
         finish(&self.app, &stack_id, &run_id, status);
+        Ok(())
+    }
+
+    /// Evaluate `plan` policies against `tofu show -json` of the saved plan.
+    async fn check_plan_policies(&mut self, bin: &Path, env: &[(String, String)], pols: &[policy::Policy], summary: &Value) -> Result<()> {
+        let out = Command::new(bin)
+            .args(["show", "-json", PLAN_FILE])
+            .current_dir(&self.cwd)
+            .env_clear()
+            .envs(env.iter().map(|(k, v)| (k, v)))
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .output()
+            .await
+            .context("running tofu show")?;
+        if !out.status.success() {
+            bail!("tofu show -json failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+        }
+        let plan: Value = serde_json::from_slice(&out.stdout).context("parsing plan JSON")?;
+        let input = json!({"plan": plan, "run": run_input(&self.run, summary), "stack": stack_input(&self.stack)});
+        let (app, pols2) = (self.app.clone(), pols.to_vec());
+        let verdicts = tokio::task::spawn_blocking(move || app.policies.run(&pols2, &input)).await??;
+        let run_id = self.run.id.clone();
+        self.app.db.write(|c| policy::record(c, &run_id, &verdicts))?;
+        let mut denied = vec![];
+        for v in &verdicts {
+            for w in v.set("warn") {
+                self.log("warn", &format!("policy {}: {}", v.policy, w.as_str().map(str::to_string).unwrap_or_else(|| w.to_string())));
+            }
+            for d in v.set("deny") {
+                let msg = d.as_str().map(str::to_string).unwrap_or_else(|| d.to_string());
+                self.log("error", &format!("policy {}: {msg}", v.policy));
+                denied.push(format!("{}: {msg}", v.policy));
+            }
+        }
+        if !denied.is_empty() {
+            bail!("plan policy denied: {}", denied.join("; "));
+        }
+        self.log("info", &format!("cairn: {} plan polic{} passed", verdicts.len(), if verdicts.len() == 1 { "y" } else { "ies" }));
         Ok(())
     }
 
@@ -544,6 +611,65 @@ impl Exec {
         });
         Ok(Some(sv))
     }
+}
+
+fn run_input(run: &Run, summary: &Value) -> Value {
+    json!({"id": run.id, "kind": run.kind, "triggered_by": run.triggered_by, "message": run.message,
+           "auto_apply": run.auto_apply, "changes": summary})
+}
+
+fn stack_input(stack: &Stack) -> Value {
+    json!({"id": stack.id, "name": stack.name, "space": stack.space, "labels": stack.labels,
+           "project_root": stack.project_root, "auto_apply": stack.auto_apply})
+}
+
+/// Re-evaluate `approval` policies for a planned run (after the plan and
+/// after every review). Rejected runs are discarded; approved auto-apply runs
+/// are queued for apply; approved manual runs wait for confirmation.
+pub async fn evaluate_approval(app: &AppRef, run_id: &str) -> Result<()> {
+    let Some(run) = app.db.read(|c| store::get_run(c, run_id))? else { bail!("run not found") };
+    if run.status != "planned" || run.approval.as_deref() != Some("pending") {
+        return Ok(());
+    }
+    let stack = app.db.read(|c| store::get_stack(c, &run.stack_id))?.ok_or_else(|| anyhow!("stack deleted"))?;
+    let chain = app.space_chain(&stack.space_id);
+    let (pols, reviews) = app.db.read(|c| Ok((policy::for_stack(c, "approval", &stack.id, &chain, &stack.labels)?, policy::reviews(c, run_id)?)))?;
+    let summary: Value = run.plan_summary.as_deref().and_then(|s| serde_json::from_str(s).ok()).unwrap_or(Value::Null);
+    let input = json!({"run": run_input(&run, &summary), "stack": stack_input(&stack),
+                       "reviews": reviews.iter().map(|r| json!({"principal": r.principal, "decision": r.decision, "note": r.note, "at": r.created_at})).collect::<Vec<_>>()});
+    let app2 = app.clone();
+    let verdicts = tokio::task::spawn_blocking(move || app2.policies.run(&pols, &input)).await??;
+    // With every approval policy detached, a pending run is approved.
+    let outcome = if verdicts.is_empty() { "approved" } else { policy::approval_outcome(&verdicts) };
+    app.db.write(|c| policy::record(c, run_id, &verdicts))?;
+    let log = |level: &str, msg: &str| app.hub.write_line(run_id, &json!({"@level": level, "@message": msg, "type": "cairn"}).to_string());
+    match outcome {
+        "rejected" => {
+            let done = app.db.write(|c| {
+                store::set_approval(c, run_id, "rejected")?;
+                let ok = store::transition(c, run_id, &["planned"], "discarded")?;
+                store::unlock_stack(c, &stack.id, Some(run_id))?;
+                Ok(ok)
+            })?;
+            if done {
+                log("error", "cairn: run rejected by approval policy");
+                cleanup(app, run_id);
+                app.metrics.finished("discarded");
+                publish(app, &stack.id, run_id, "discarded");
+                app.sched.kick();
+            }
+        }
+        "approved" => {
+            app.db.write(|c| store::set_approval(c, run_id, "approved"))?;
+            log("info", "cairn: approved by approval policies");
+            if run.auto_apply && app.db.write(|c| store::transition(c, run_id, &["planned"], "apply_queued"))? {
+                publish(app, &stack.id, run_id, "apply_queued");
+                app.sched.kick();
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Send SIGINT (lets tofu release locks and write partial state).

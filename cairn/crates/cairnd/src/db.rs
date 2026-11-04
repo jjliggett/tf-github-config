@@ -135,6 +135,54 @@ const MIGRATIONS: &[&str] = &[
         status    INTEGER NOT NULL
     );
     "#,
+    // 3: policies, reviews, notifications
+    r#"
+    CREATE TABLE policies (
+        id          TEXT PRIMARY KEY,
+        space_id    TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+        name        TEXT NOT NULL UNIQUE,
+        kind        TEXT NOT NULL,
+        body        TEXT NOT NULL,
+        labels      TEXT NOT NULL DEFAULT '[]',
+        description TEXT NOT NULL DEFAULT '',
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+    );
+    CREATE INDEX policies_by_kind ON policies (kind, space_id);
+    CREATE TABLE policy_attachments (
+        policy_id TEXT NOT NULL REFERENCES policies(id) ON DELETE CASCADE,
+        stack_id  TEXT NOT NULL REFERENCES stacks(id) ON DELETE CASCADE,
+        PRIMARY KEY (policy_id, stack_id)
+    );
+    CREATE TABLE policy_evaluations (
+        id         TEXT PRIMARY KEY,
+        run_id     TEXT NOT NULL,
+        policy_id  TEXT NOT NULL,
+        policy     TEXT NOT NULL,
+        kind       TEXT NOT NULL,
+        result     TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX policy_evaluations_by_run ON policy_evaluations (run_id);
+    CREATE TABLE run_reviews (
+        id         TEXT PRIMARY KEY,
+        run_id     TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        principal  TEXT NOT NULL,
+        decision   TEXT NOT NULL,
+        note       TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+    );
+    ALTER TABLE runs ADD COLUMN approval TEXT;
+    ALTER TABLE users ADD COLUMN policy_roles TEXT NOT NULL DEFAULT '{}';
+    CREATE TABLE webhooks (
+        id         TEXT PRIMARY KEY,
+        space_id   TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+        url        TEXT NOT NULL,
+        secret     TEXT NOT NULL DEFAULT '',
+        enabled    INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+    );
+    "#,
 ];
 
 pub struct Db {

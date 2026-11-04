@@ -82,8 +82,9 @@ managed runner picks it up.
 | State & storage | Versioned, deduplicated by SHA-256; OpenTofu `http` backend with locking; serial/lineage checks; blobs on local disk, S3-compatible stores (AWS, MinIO, R2, GCS interop…) or Azure Blob; encrypted at rest by default; native TLS | Postgres for metadata, rollback command |
 | TFE API | Organizations, workspaces (with pagination), configuration versions with pre-signed uploads, runs and actions, plans and applies with logs, current state version and outputs, workspace locks | `tofu login` and the `cloud {}` block over TLS, state-version upload, the `tfe` provider, teams |
 | Identity & access | Space tree with inherited roles (reader/planner/writer/admin); users from OIDC (bearer ID tokens and browser/CLI login with PKCE); teams = IdP groups; user and service tokens with expiry; audit log; sensitive variables encrypted (ChaCha20-Poly1305) | Workload identity / OpenBao |
-| VCS, policy, registry | — | Forgejo/Gitea webhooks and PR comments (with Atlantis's lock leak fixed), Rego policies, module registry |
-| CLI / MCP | Login, spaces, stacks, preview/deploy with live logs, runs, variables, state, outputs, raw API; MCP over stdio with a human gate on applies | Repo-aware stack inference, MCP over HTTP with OAuth |
+| Policy | Rego (in-process `regorus`): `plan` (deny/warn on `tofu show -json`), `approval` (reviews; reject discards), `login` (deny/admin/space roles), `notification` (filter and reshape signed webhooks); explicit or label auto-attachment; dry-run endpoint | `push`, `trigger`, `task` hooks (with VCS, dependencies, tasks) |
+| VCS, registry | — | Forgejo/Gitea webhooks and PR comments (with Atlantis's lock leak fixed), module registry |
+| CLI / MCP | Login, spaces, stacks, preview/deploy with live logs, runs (review, policies), policies, webhooks, variables, state, outputs, raw API; MCP over stdio with a human gate on applies | Repo-aware stack inference, MCP over HTTP with OAuth |
 
 Tests: `cargo test` (unit) and
 `TOFU=$(which tofu) python3 -m unittest discover -s tests -p 'test_*.py'`

@@ -61,6 +61,8 @@ pub struct Run {
     pub error: Option<String>,
     pub created_at: String,
     pub status_times: Value,
+    /// Approval-policy state: `pending`, `approved`, `rejected` (None: no approval policies).
+    pub approval: Option<String>,
     #[serde(skip)]
     pub seq: i64,
 }
@@ -362,7 +364,7 @@ pub fn mark_config_uploaded(c: &Connection, id: &str, sha: &str, size: i64) -> R
 // ---------------------------------------------------------------- runs
 
 const RUN_COLS: &str = "id, stack_id, kind, status, config_id, auto_apply, message, triggered_by, has_changes,
-    adds, changes, destroys, plan_summary, error, created_at, status_times, seq";
+    adds, changes, destroys, plan_summary, error, created_at, status_times, seq, approval";
 
 fn run_row(r: &Row) -> rusqlite::Result<Run> {
     let st: String = r.get(15)?;
@@ -384,6 +386,7 @@ fn run_row(r: &Row) -> rusqlite::Result<Run> {
         created_at: r.get(14)?,
         status_times: serde_json::from_str(&st).unwrap_or(Value::Null),
         seq: r.get(16)?,
+        approval: r.get(17)?,
     })
 }
 
@@ -461,6 +464,11 @@ pub fn set_plan_result(
         "UPDATE runs SET has_changes = ?2, adds = ?3, changes = ?4, destroys = ?5, plan_summary = ?6 WHERE id = ?1",
         params![id, has_changes, counts.0, counts.1, counts.2, summary.to_string()],
     )?;
+    Ok(())
+}
+
+pub fn set_approval(c: &Connection, id: &str, approval: &str) -> Result<()> {
+    c.execute("UPDATE runs SET approval = ?2 WHERE id = ?1", params![id, approval])?;
     Ok(())
 }
 

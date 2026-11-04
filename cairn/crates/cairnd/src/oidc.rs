@@ -68,6 +68,8 @@ pub struct Identity {
     pub name: String,
     pub groups: Vec<String>,
     pub site_admin: bool,
+    /// `exp` claim (seconds since the epoch; 0 if absent).
+    pub exp: u64,
 }
 
 pub fn b64url(data: &[u8]) -> String {
@@ -163,6 +165,7 @@ impl Oidc {
                 .to_string(),
             groups,
             site_admin,
+            exp: c["exp"].as_u64().unwrap_or(0),
         }
     }
 

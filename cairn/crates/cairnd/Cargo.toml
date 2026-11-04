@@ -25,6 +25,7 @@ chacha20poly1305 = "0.10"
 clap = { version = "4", features = ["derive", "env"] }
 flate2 = "1"
 hex = "0.4"
+regorus = { version = "0.14", default-features = false, features = ["arc", "regex", "glob", "semver", "std", "time"] }
 hmac = "0.12"
 mimalloc = { version = "0.1", default-features = false, optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
