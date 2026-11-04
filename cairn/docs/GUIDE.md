@@ -336,3 +336,46 @@ timer sleeps until the next due schedule (no polling); a schedule that was
 due while the server was down fires once at startup. A drift schedule is
 skipped while its previous check is still running. Each schedule records
 `last_run_id` and `last_error`.
+
+## Stack dependencies
+
+A stack can depend on others and take their outputs as inputs:
+
+```sh
+cairn dep add -s app --space prod --on network --on-space prod --ref vpc_id=vpc_id --ref subnet_ids=subnets
+cairn dep add -s monitoring --space prod --on app        # ordering and triggering only
+cairn dep list -s network --space prod
+```
+
+* **Inputs.** Each reference passes an output of the upstream stack's
+  current state to the downstream run as `TF_VAR_<input>` (strings as is,
+  everything else as JSON, which OpenTofu reads for lists, maps and
+  objects). They override a stack variable of the same name. If the output
+  doesn't exist yet the run fails with a clear message.
+* **Triggering.** When an upstream tracked run applies, dependents get a
+  tracked run of their deployed configuration — when they reference
+  outputs, only if one of those outputs changed. Chains continue (network →
+  app → monitoring) up to 10 hops.
+* **Ordering.** A dependent's tracked run waits while any of its upstream
+  stacks has a tracked run queued or in progress, so a chain applies in
+  order even when runs are queued together.
+* **Safety.** Cycles are refused when the dependency is added. Adding one
+  needs admin on the dependent stack and read access to the upstream stack
+  (its outputs flow into your runs).
+
+**Trigger policies** on the upstream stack can trigger more stacks after it
+applies. They get `input.run`, `input.stack`, `input.outputs_changed` and
+`input.stacks` (stacks in the upstream's space and below) and return a set
+of stack IDs or `space/name`:
+
+```rego
+package cairn
+import rego.v1
+
+# Re-run every stack labelled "uses-vpc" when the VPC ID changes.
+trigger contains s.id if {
+  "vpc_id" in input.outputs_changed
+  some s in input.stacks
+  "uses-vpc" in s.labels
+}
+```

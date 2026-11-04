@@ -101,6 +101,13 @@ fn dispatch(app: &AppRef) -> Result<()> {
     if queued.is_empty() {
         return Ok(());
     }
+    // Dependencies: a tracked run waits while an upstream stack has a tracked run queued or running.
+    let deps = app.db.read(crate::deps::all)?;
+    let active_tracked: std::collections::HashSet<String> = if deps.is_empty() {
+        Default::default()
+    } else {
+        app.db.read(store::active_runs)?.into_iter().filter(|r| !store::is_proposed(&r.kind)).map(|r| r.stack_id).collect()
+    };
     // Stacks held by a tracked run that has started (planning … applying).
     let mut held: std::collections::HashSet<String> = app
         .db
@@ -113,7 +120,7 @@ fn dispatch(app: &AppRef) -> Result<()> {
     for run in queued {
         let apply = run.status == "apply_queued";
         if !apply && !store::is_proposed(&run.kind)
-            && held.contains(&run.stack_id) {
+            && (held.contains(&run.stack_id) || crate::deps::blocked_by(&deps, &active_tracked, &run.stack_id)) {
                 continue;
             }
         let Ok(permit) = app.sched.sem.clone().try_acquire_owned() else {
@@ -197,6 +204,19 @@ async fn execute(app: AppRef, run: Run, apply_only: bool, permit: OwnedSemaphore
 fn finish(app: &AppRef, stack_id: &str, run_id: &str, status: &str) {
     app.revoke_run_tokens(run_id);
     app.metrics.finished(status);
+    if status == "applied" {
+        let (app, stack_id, run_id) = (app.clone(), stack_id.to_string(), run_id.to_string());
+        tokio::spawn(async move {
+            let loaded = app.db.read(|c| Ok((store::get_stack(c, &stack_id)?, store::get_run(c, &run_id)?)));
+            if let Ok((Some(stack), Some(run))) = loaded {
+                match crate::deps::on_applied(&app, &stack, &run).await {
+                    Ok(started) if !started.is_empty() => tracing::info!(run = %run_id, ?started, "triggered dependent stacks"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(run = %run_id, "triggering dependent stacks failed: {e:#}"),
+                }
+            }
+        });
+    }
     publish(app, stack_id, run_id, status);
     if !app.cfg.keep_workspaces {
         let _ = std::fs::remove_dir_all(app.dir("work").join(run_id));
@@ -576,6 +596,9 @@ impl Exec {
         }
         env.push(("CAIRN_RUN_ID".into(), self.run.id.clone()));
         env.push(("CAIRN_STACK_ID".into(), self.stack.id.clone()));
+        // Outputs of upstream stacks (dependencies with references) come
+        // last, so they win over a stack variable of the same name.
+        let inputs = self.app.db.read(|c| crate::deps::input_env(c, &self.stack.id))?;
         let vars = self.app.db.read(|c| store::list_variables(c, &self.stack.id))?;
         for v in vars {
             let value = if v.sensitive { self.app.secrets.open(&v.value)? } else { v.value };
@@ -583,6 +606,13 @@ impl Exec {
                 "env" => env.push((v.key, value)),
                 _ => env.push((format!("TF_VAR_{}", v.key), value)),
             }
+        }
+        for (k, v, sensitive) in inputs {
+            if !sensitive {
+                self.log("info", &format!("cairn: {k} from upstream stack"));
+            }
+            env.retain(|(ek, _)| *ek != k);
+            env.push((k, v));
         }
         Ok(env)
     }

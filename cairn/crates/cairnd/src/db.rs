@@ -280,6 +280,17 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX schedules_by_next ON schedules (next_run_at);
     "#,
+    // 7: stack dependencies
+    r#"
+    CREATE TABLE stack_dependencies (
+        stack_id   TEXT NOT NULL REFERENCES stacks(id) ON DELETE CASCADE,
+        depends_on TEXT NOT NULL REFERENCES stacks(id) ON DELETE CASCADE,
+        refs       TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (stack_id, depends_on)
+    );
+    CREATE INDEX stack_dependencies_up ON stack_dependencies (depends_on);
+    "#,
 ];
 
 pub struct Db {

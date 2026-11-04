@@ -6,6 +6,7 @@ mod auth;
 mod blob;
 mod crypto;
 mod db;
+mod deps;
 mod engine;
 mod events;
 mod http;

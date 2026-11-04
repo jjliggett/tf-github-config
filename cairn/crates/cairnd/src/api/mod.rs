@@ -1,6 +1,7 @@
 //! HTTP routing and authentication.
 
 pub mod identity;
+pub mod deps;
 pub mod native;
 pub mod policies;
 pub mod registry;
@@ -86,6 +87,8 @@ pub fn router(app: AppRef) -> Router {
         .route("/vcs/{id}", get(vcs::get).delete(vcs::delete))
         .route("/stacks/{id}/sync", post(vcs::sync))
         .route("/stacks/{id}/schedules", get(schedules::list).post(schedules::create))
+        .route("/stacks/{id}/dependencies", get(deps::list).post(deps::add))
+        .route("/stacks/{id}/dependencies/{up}", axum::routing::delete(deps::remove))
         .route("/stacks/{id}/schedules/{sid}", axum::routing::delete(schedules::delete))
         .route("/spaces/{space}/webhooks", get(policies::list_webhooks).post(policies::create_webhook))
         .route("/spaces/{space}/webhooks/{id}", axum::routing::delete(policies::delete_webhook))

@@ -76,6 +76,9 @@ enum Cmd {
     /// Policies as code (Rego): plan, approval, login, push, trigger, task, notification.
     #[command(subcommand)]
     Policy(policy::PolicyCmd),
+    /// Stack dependencies and output references.
+    #[command(subcommand)]
+    Dep(DepCmd),
     /// Schedules: drift detection, recurring runs and tasks, destroy at a time.
     #[command(subcommand)]
     Schedule(ScheduleCmd),
@@ -330,6 +333,35 @@ enum RunCmd {
 }
 
 #[derive(Subcommand)]
+enum DepCmd {
+    /// What a stack depends on, and what depends on it.
+    List {
+        #[command(flatten)]
+        sel: StackSel,
+    },
+    /// `cairn dep add -s app --on network --on-space prod --ref vpc_id=vpc_id`
+    Add {
+        #[command(flatten)]
+        sel: StackSel,
+        /// Upstream stack (ID or name).
+        #[arg(long)]
+        on: String,
+        #[arg(long)]
+        on_space: Option<String>,
+        /// OUTPUT=INPUT: pass the upstream output in as TF_VAR_<INPUT>. Repeatable.
+        #[arg(long = "ref")]
+        refs: Vec<String>,
+    },
+    Remove {
+        #[command(flatten)]
+        sel: StackSel,
+        /// Upstream stack ID.
+        #[arg(long)]
+        on: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum ScheduleCmd {
     List {
         #[command(flatten)]
@@ -549,6 +581,7 @@ fn dispatch(c: &Client, out: &Out, cmd: &Cmd) -> Result<u8> {
         Cmd::Vcs(cmd) => vcs::vcs(c, out, cmd)?,
         Cmd::Module(cmd) => registry::module(c, out, cmd)?,
         Cmd::Schedule(cmd) => schedule(c, out, cmd)?,
+        Cmd::Dep(cmd) => dep(c, out, cmd)?,
         Cmd::Provider(cmd) => registry::provider(c, out, cmd)?,
         Cmd::Stack(s) => return stack(c, out, s),
         Cmd::Run(r) => return run_cmd(c, out, r),
@@ -742,6 +775,44 @@ fn report(out: &Out, r: &Value) {
     } else {
         println!("\n{}", summary(r));
     }
+}
+
+fn dep(c: &Client, out: &Out, cmd: &DepCmd) -> Result<()> {
+    match cmd {
+        DepCmd::List { sel } => {
+            let v = c.get(&sel.path("/dependencies"))?;
+            if out.json {
+                out.value(&v);
+                return Ok(());
+            }
+            let line = |d: &Value| {
+                let s = &d["stack"];
+                let refs: Vec<String> = d["references"].as_array().into_iter().flatten()
+                    .map(|r| format!("{}→{}", r["output"].as_str().unwrap_or(""), r["input"].as_str().unwrap_or(""))).collect();
+                format!("{}/{} ({}) {}", s["space"].as_str().unwrap_or("?"), s["name"].as_str().unwrap_or("?"), s["id"].as_str().unwrap_or(""), refs.join(", "))
+            };
+            println!("depends on:");
+            for d in v["depends_on"].as_array().into_iter().flatten() {
+                println!("  {}", line(d));
+            }
+            println!("dependents:");
+            for d in v["dependents"].as_array().into_iter().flatten() {
+                println!("  {}", line(d));
+            }
+        }
+        DepCmd::Add { sel, on, on_space, refs } => {
+            let refs: Vec<Value> = refs
+                .iter()
+                .map(|r| r.split_once('=').map(|(o, i)| json!({"output": o, "input": i})).context("--ref takes OUTPUT=INPUT"))
+                .collect::<Result<_>>()?;
+            let v = c.send("POST", &sel.path("/dependencies"), &json!({"stack": on, "space": on_space, "references": refs}))?;
+            out.object(&v, &["stack_id", "depends_on", "references"]);
+        }
+        DepCmd::Remove { sel, on } => {
+            c.delete(&sel.path(&format!("/dependencies/{on}")))?;
+        }
+    }
+    Ok(())
 }
 
 fn schedule(c: &Client, out: &Out, cmd: &ScheduleCmd) -> Result<()> {
