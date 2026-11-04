@@ -1,0 +1,12 @@
+[submodule "cairn/upstream/otf"]
+	path = cairn/upstream/otf
+	url = https://github.com/leg100/otf
+	shallow = true
+[submodule "cairn/upstream/atlantis"]
+	path = cairn/upstream/atlantis
+	url = https://github.com/runatlantis/atlantis
+	shallow = true
+[submodule "cairn/upstream/terrakube"]
+	path = cairn/upstream/terrakube
+	url = https://github.com/terrakube-io/terrakube
+	shallow = true

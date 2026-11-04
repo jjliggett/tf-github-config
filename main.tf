@@ -181,6 +181,36 @@ resource "github_repository" "CurrentTimeApp_dev_env" {
   }
 }
 
+resource "github_repository" "cairn" {
+  name                   = "cairn"
+  description            = "Lightweight OpenTofu automation server and CLI in Rust: benchmarks of OTF, Terrakube and Atlantis, plus the spec."
+  allow_merge_commit     = false
+  allow_squash_merge     = true
+  allow_rebase_merge     = true
+  delete_branch_on_merge = true
+  archive_on_destroy     = true
+  has_issues             = true
+  has_projects           = true
+  has_wiki               = false
+  vulnerability_alerts   = true
+  topics = [
+    "opentofu",
+    "terraform",
+    "iac",
+    "gitops",
+    "rust",
+    "mcp"
+  ]
+  security_and_analysis {
+    secret_scanning {
+      status = "enabled"
+    }
+    secret_scanning_push_protection {
+      status = "enabled"
+    }
+  }
+}
+
 locals {
   repositories = toset(["tf-github-config", "jjversion", "jjversion-action", "jjversion-gha-output", "CurrentTimeApp"])
 }
