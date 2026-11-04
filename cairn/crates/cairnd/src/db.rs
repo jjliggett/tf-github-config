@@ -211,6 +211,56 @@ const MIGRATIONS: &[&str] = &[
         PRIMARY KEY (vcs_id, repo, pr)
     );
     "#,
+    // 5: registry
+    r#"
+    CREATE TABLE registry_modules (
+        id          TEXT PRIMARY KEY,
+        space_id    TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+        name        TEXT NOT NULL,
+        system      TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        created_at  TEXT NOT NULL,
+        UNIQUE (space_id, name, system)
+    );
+    CREATE TABLE registry_module_versions (
+        id         TEXT PRIMARY KEY,
+        module_id  TEXT NOT NULL REFERENCES registry_modules(id) ON DELETE CASCADE,
+        version    TEXT NOT NULL,
+        sha256     TEXT NOT NULL,
+        size       INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE (module_id, version)
+    );
+    CREATE TABLE registry_providers (
+        id         TEXT PRIMARY KEY,
+        space_id   TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+        type       TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE (space_id, type)
+    );
+    CREATE TABLE registry_provider_versions (
+        id          TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL REFERENCES registry_providers(id) ON DELETE CASCADE,
+        version     TEXT NOT NULL,
+        protocols   TEXT NOT NULL,
+        key_id      TEXT NOT NULL,
+        ascii_armor TEXT NOT NULL,
+        shasums     TEXT NOT NULL,
+        shasums_sig BLOB NOT NULL,
+        created_at  TEXT NOT NULL,
+        UNIQUE (provider_id, version)
+    );
+    CREATE TABLE registry_provider_platforms (
+        id         TEXT PRIMARY KEY,
+        version_id TEXT NOT NULL REFERENCES registry_provider_versions(id) ON DELETE CASCADE,
+        os         TEXT NOT NULL,
+        arch       TEXT NOT NULL,
+        filename   TEXT NOT NULL,
+        sha256     TEXT NOT NULL,
+        size       INTEGER NOT NULL,
+        UNIQUE (version_id, os, arch)
+    );
+    "#,
 ];
 
 pub struct Db {

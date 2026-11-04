@@ -195,6 +195,7 @@ async fn execute(app: AppRef, run: Run, apply_only: bool, permit: OwnedSemaphore
 }
 
 fn finish(app: &AppRef, stack_id: &str, run_id: &str, status: &str) {
+    app.revoke_run_tokens(run_id);
     app.metrics.finished(status);
     publish(app, stack_id, run_id, status);
     if !app.cfg.keep_workspaces {
@@ -204,6 +205,7 @@ fn finish(app: &AppRef, stack_id: &str, run_id: &str, status: &str) {
 
 /// Remove a planned run's workspace after discard.
 pub fn cleanup(app: &AppRef, run_id: &str) {
+    app.revoke_run_tokens(run_id);
     if !app.cfg.keep_workspaces {
         let _ = std::fs::remove_dir_all(app.dir("work").join(run_id));
     }
@@ -497,6 +499,13 @@ impl Exec {
         env.push(("TF_PLUGIN_CACHE_DIR".into(), self.app.dir("cache/plugins").display().to_string()));
         if self.app.cfg.engine_gogc > 0 {
             env.push(("GOGC".into(), self.app.cfg.engine_gogc.to_string()));
+        }
+        // Registry access for `tofu init`: a run-scoped token in a CLI config file.
+        if self.app.cfg.external_url.is_some() {
+            let token = self.app.mint_run_token(&self.run.id, &self.stack.space_id);
+            let rc = self.work.join(".cairn.tofurc");
+            std::fs::write(&rc, format!("credentials \"{}\" {{\n  token = \"{token}\"\n}}\n", self.app.registry_host()))?;
+            env.push(("TF_CLI_CONFIG_FILE".into(), rc.display().to_string()));
         }
         env.push(("CAIRN_RUN_ID".into(), self.run.id.clone()));
         env.push(("CAIRN_STACK_ID".into(), self.stack.id.clone()));

@@ -239,3 +239,51 @@ propose if { input.push; input.push.branch != input.stack.branch }   # preview e
 propose if input.pull_request
 ignore if contains(input.push.message, "[skip cairn]")
 ```
+
+## Module and provider registry
+
+Cairn is a private registry speaking OpenTofu's `modules.v1` and
+`providers.v1` protocols. Namespaces are spaces, so the same roles decide
+who can read and publish: `reader` to use, `writer` to publish, `admin` to
+delete. It needs HTTPS (OpenTofu only talks to registries over TLS) and
+`--external-url` set to the address OpenTofu uses.
+
+```hcl
+module "vpc" {
+  source  = "cairn.example.com/platform/vpc/aws"   # host/space/name/system
+  version = "~> 1.2"
+}
+
+terraform {
+  required_providers {
+    internal = { source = "cairn.example.com/platform/internal" }   # host/space/type
+  }
+}
+```
+
+**Publishing.**
+
+```sh
+cairn module publish platform/vpc/aws 1.2.0 --dir ./modules/vpc
+cairn provider publish platform/internal 0.4.0 --dir dist --gpg-key signing-key.asc
+cairn module list
+cairn provider list
+```
+
+Provider releases use the public registry's layout, which goreleaser's
+standard Terraform provider config produces: one
+`terraform-provider-<type>_<version>_<os>_<arch>.zip` per platform,
+`terraform-provider-<type>_<version>_SHA256SUMS` and its detached GPG
+signature `…_SHA256SUMS.sig`. Cairn checks every zip against
+`SHA256SUMS`, stores the signature and public key as published, and hands
+them to OpenTofu, which verifies the signature itself during `tofu init`
+(a bad signature fails the install). Signing keys never touch the server.
+
+**Using it.** Locally, create a token (`cairn token create`) and give it to
+OpenTofu with `TF_TOKEN_cairn_example_com=<token>` or a `credentials
+"cairn.example.com" { token = "…" }` block in your CLI config (`tofu login`
+is not supported yet). Runs inside Cairn need nothing: each run gets a short-lived token,
+written to its own CLI config, that can read the registry namespaces of its
+stack's space and that space's ancestors — nothing else — and is revoked
+when the run finishes. Download URLs given to OpenTofu are pre-signed and
+expire after an hour.

@@ -53,7 +53,8 @@ fn permissions() -> Value {
 pub async fn well_known() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "application/json")],
-        json!({"tfe.v2": "/api/v2/", "tfe.v2.1": "/api/v2/", "tfe.v2.2": "/api/v2/", "state.v2": "/api/v2/"})
+        json!({"tfe.v2": "/api/v2/", "tfe.v2.1": "/api/v2/", "tfe.v2.2": "/api/v2/", "state.v2": "/api/v2/",
+               "modules.v1": "/registry/modules/v1/", "providers.v1": "/registry/providers/v1/"})
             .to_string(),
     )
 }

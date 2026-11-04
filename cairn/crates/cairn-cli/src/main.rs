@@ -3,6 +3,7 @@
 mod client;
 mod identity;
 mod policy;
+mod registry;
 mod vcs;
 mod mcp;
 
@@ -75,6 +76,12 @@ enum Cmd {
     /// Policies as code (Rego): plan, approval, login, push, trigger, task, notification.
     #[command(subcommand)]
     Policy(policy::PolicyCmd),
+    /// Private module registry.
+    #[command(subcommand)]
+    Module(registry::ModuleCmd),
+    /// Private provider registry.
+    #[command(subcommand)]
+    Provider(registry::ProviderCmd),
     /// VCS integrations (GitHub, GitLab, Bitbucket, Azure DevOps, Gitea, Forgejo).
     #[command(subcommand)]
     Vcs(vcs::VcsCmd),
@@ -476,6 +483,8 @@ fn dispatch(c: &Client, out: &Out, cmd: &Cmd) -> Result<u8> {
         Cmd::Policy(cmd) => policy::policy(c, out, cmd)?,
         Cmd::Webhook(cmd) => policy::webhook(c, out, cmd)?,
         Cmd::Vcs(cmd) => vcs::vcs(c, out, cmd)?,
+        Cmd::Module(cmd) => registry::module(c, out, cmd)?,
+        Cmd::Provider(cmd) => registry::provider(c, out, cmd)?,
         Cmd::Stack(s) => return stack(c, out, s),
         Cmd::Run(r) => return run_cmd(c, out, r),
     }

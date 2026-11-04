@@ -25,6 +25,7 @@ chacha20poly1305 = "0.10"
 clap = { version = "4", features = ["derive", "env"] }
 flate2 = "1"
 hex = "0.4"
+sha1 = "0.10"
 regorus = { version = "0.14", default-features = false, features = ["arc", "regex", "glob", "semver", "std", "time"] }
 hmac = "0.12"
 mimalloc = { version = "0.1", default-features = false, optional = true }
@@ -39,7 +40,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "proces
 tokio-stream = { version = "0.1", features = ["sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "std"] }
-ureq = { version = "2", features = ["json"] }
+ureq = { version = "2", features = ["json", "native-certs"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]

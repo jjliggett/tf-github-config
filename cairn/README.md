@@ -84,8 +84,8 @@ managed runner picks it up.
 | Identity & access | Space tree with inherited roles (reader/planner/writer/admin); users from OIDC (bearer ID tokens and browser/CLI login with PKCE); teams = IdP groups; user and service tokens with expiry; audit log; sensitive variables encrypted (ChaCha20-Poly1305) | Workload identity / OpenBao |
 | Policy | Rego (in-process `regorus`): `plan` (deny/warn on `tofu show -json`), `approval` (reviews; reject discards), `login` (deny/admin/space roles), `push` (track/propose/ignore), `notification` (filter and reshape signed webhooks); explicit or label auto-attachment; dry-run endpoint | `trigger`, `task` hooks (with dependencies, tasks) |
 | VCS | GitHub, GitLab, Bitbucket Cloud, Azure DevOps, Gitea, Forgejo: verified webhooks, source as commit archives, push → tracked / PR → proposed runs, `/cairn plan` and `/cairn apply` comments, commit statuses and one updating PR comment on all six, PR close/merge stops its runs and frees locks, `push` policies, manual sync | GitHub App auth, Bitbucket Data Center |
-| Registry | — | Module and provider registry |
-| CLI / MCP | Login, spaces, stacks, preview/deploy with live logs, runs (review, policies), policies, webhooks, VCS integrations and stack sync, variables, state, outputs, raw API; MCP over stdio with a human gate on applies | Repo-aware stack inference, MCP over HTTP with OAuth |
+| Registry | Private `modules.v1` and `providers.v1` (namespaces = spaces, RBAC applies), semver ordering, goreleaser-layout provider publishing with GPG-signed SHA256SUMS verified by OpenTofu, pre-signed downloads, run-scoped registry tokens | Publishing modules from VCS tags |
+| CLI / MCP | Login, spaces, stacks, preview/deploy with live logs, runs (review, policies), policies, webhooks, VCS integrations and stack sync, module and provider publishing, variables, state, outputs, raw API; MCP over stdio with a human gate on applies | Repo-aware stack inference, MCP over HTTP with OAuth |
 
 Tests: `cargo test` (unit) and
 `TOFU=$(which tofu) python3 -m unittest discover -s tests -p 'test_*.py'`

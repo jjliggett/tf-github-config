@@ -84,6 +84,10 @@ impl Client {
         Self::json(Self::finish(self.req("POST", path).set("Content-Type", "application/gzip").send_bytes(body))?)
     }
 
+    pub fn send_bytes(&self, method: &str, path: &str, ctype: &str, body: &[u8]) -> Result<Value> {
+        Self::json(Self::finish(self.req(method, path).set("Content-Type", ctype).send_bytes(body))?)
+    }
+
     pub fn delete(&self, path: &str) -> Result<Value> {
         Self::json(Self::finish(self.req("DELETE", path).call())?)
     }

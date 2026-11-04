@@ -131,6 +131,8 @@ pub struct App {
     pub policies: crate::policy::PolicyCache,
     /// Verified bearer ID tokens: sha256 -> (principal, valid until).
     pub jwt_cache: Mutex<HashMap<String, (crate::auth::Principal, std::time::Instant)>>,
+    /// Run-scoped registry tokens: sha256 -> (principal, valid until).
+    pub run_tokens: Mutex<HashMap<String, (crate::auth::Principal, std::time::Instant)>>,
     /// Key for signing pre-authorized upload URLs (process lifetime).
     pub url_key: [u8; 32],
 }
@@ -150,6 +152,10 @@ impl App {
             if ct_eq(site.as_bytes(), token.as_bytes()) {
                 return Some(Principal::site());
             }
+        }
+        if token.starts_with("cairn_run_") {
+            let p = self.run_tokens.lock().unwrap().get(&sha256_hex(token.as_bytes())).cloned();
+            return p.filter(|(_, until)| *until > std::time::Instant::now()).map(|(p, _)| p);
         }
         if let Some((t, owner)) = self.authz.token(&sha256_hex(token.as_bytes())) {
             return Some(principal_for_token(&t, owner));
@@ -237,6 +243,38 @@ impl App {
         let mut m = self.url_key.to_vec();
         m.extend_from_slice(what.as_bytes());
         sha256_hex(&m)[..32].to_string()
+    }
+
+    /// Host (and port) OpenTofu uses for this server's registry: from
+    /// `--external-url`, else the listen address.
+    pub fn registry_host(&self) -> String {
+        match &self.cfg.external_url {
+            Some(u) => u.split("://").nth(1).unwrap_or(u).split('/').next().unwrap_or("").to_string(),
+            None => self.cfg.listen.to_string(),
+        }
+    }
+
+    /// Mint a token for one run: reads the registry in its stack's space and
+    /// ancestors, nothing else. Revoked when the run finishes.
+    pub fn mint_run_token(&self, run_id: &str, stack_space_id: &str) -> String {
+        let token = format!("cairn_run_{}", crate::util::new_token());
+        let p = crate::auth::Principal {
+            kind: "run",
+            id: stack_space_id.to_string(),
+            name: run_id.to_string(),
+            groups: vec![],
+            site_admin: false,
+            policy_roles: HashMap::new(),
+        };
+        let mut m = self.run_tokens.lock().unwrap();
+        let now = std::time::Instant::now();
+        m.retain(|_, (p, until)| *until > now && p.name != run_id);
+        m.insert(sha256_hex(token.as_bytes()), (p, now + std::time::Duration::from_secs(12 * 3600)));
+        token
+    }
+
+    pub fn revoke_run_tokens(&self, run_id: &str) {
+        self.run_tokens.lock().unwrap().retain(|_, (p, _)| p.name != run_id);
     }
 
     /// URL for links that leave the request context (commit statuses, PR comments).

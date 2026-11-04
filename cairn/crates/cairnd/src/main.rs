@@ -12,6 +12,8 @@ mod http;
 mod notify;
 mod oidc;
 mod policy;
+mod registry;
+mod registry_gpg;
 mod runner;
 mod store;
 mod util;
@@ -124,6 +126,7 @@ async fn serve(cfg: app::Config, cpus: usize, started: Instant) -> Result<()> {
         oidc,
         policies: Default::default(),
         jwt_cache: Default::default(),
+        run_tokens: Default::default(),
         url_key,
     });
 

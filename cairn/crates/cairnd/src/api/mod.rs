@@ -3,6 +3,7 @@
 pub mod identity;
 pub mod native;
 pub mod policies;
+pub mod registry;
 pub mod tfe;
 pub mod vcs;
 
@@ -23,6 +24,8 @@ fn is_public(path: &str) -> bool {
         || (path.starts_with("/api/v2/configuration-versions/") && path.ends_with("/upload"))
         // Verified by provider signature in the handler.
         || path.starts_with("/webhooks/vcs/")
+        // Pre-signed registry downloads.
+        || path.starts_with("/registry/dl/")
 }
 
 async fn auth(State(app): State<AppRef>, mut req: Request, next: Next) -> Response {
@@ -71,6 +74,13 @@ pub fn router(app: AppRef) -> Router {
         .route("/stacks/{id}/policies", get(policies::stack_policies))
         .route("/runs/{id}/policies", get(policies::run_policies))
         .route("/runs/{id}/reviews", post(policies::review))
+        .route("/registry/modules", get(registry::list_modules))
+        .route("/registry/modules/{ns}/{name}/{system}", get(registry::get_module).delete(registry::delete_module))
+        .route("/registry/modules/{ns}/{name}/{system}/{version}", post(registry::publish_module).delete(registry::delete_module_version))
+        .route("/registry/providers", get(registry::list_providers))
+        .route("/registry/providers/{ns}/{kind}", get(registry::get_provider))
+        .route("/registry/providers/{ns}/{kind}/{version}", post(registry::create_provider_version).delete(registry::delete_provider_version))
+        .route("/registry/providers/{ns}/{kind}/{version}/{os}/{arch}", axum::routing::put(registry::upload_platform))
         .route("/vcs", get(vcs::list).post(vcs::create))
         .route("/vcs/{id}", get(vcs::get).delete(vcs::delete))
         .route("/stacks/{id}/sync", post(vcs::sync))
@@ -129,6 +139,11 @@ pub fn router(app: AppRef) -> Router {
         .route("/auth/config", get(identity::auth_config))
         .route("/auth/login", get(identity::login))
         .route("/webhooks/vcs/{id}", post(vcs::webhook))
+        .route("/registry/modules/v1/{ns}/{name}/{system}/versions", get(registry::module_versions))
+        .route("/registry/modules/v1/{ns}/{name}/{system}/{version}/download", get(registry::module_download))
+        .route("/registry/providers/v1/{ns}/{kind}/versions", get(registry::provider_versions))
+        .route("/registry/providers/v1/{ns}/{kind}/{version}/download/{os}/{arch}", get(registry::provider_download))
+        .route("/registry/dl/{exp}/{sig}/{kind}/{id}/{file}", get(registry::download))
         .route("/auth/callback", get(identity::callback))
         .nest("/api/v1", v1)
         .nest("/api/v2", v2)
