@@ -16,6 +16,7 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use clap::Parser;
 
+#[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -29,7 +30,7 @@ fn main() -> Result<()> {
         .with_ansi(false)
         .init();
 
-    let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let cpus = effective_cpus();
     let workers = cfg.workers.unwrap_or(cpus.min(4)).max(1);
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(workers)
@@ -38,6 +39,32 @@ fn main() -> Result<()> {
         .enable_all()
         .build()?
         .block_on(serve(cfg, cpus, started))
+}
+
+/// CPUs we may actually use: the smaller of the visible cores and the cgroup
+/// CPU quota (v2 `cpu.max`, or v1 `cpu.cfs_quota_us`), rounded up.
+fn effective_cpus() -> usize {
+    let visible = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let read = |p: &str| std::fs::read_to_string(p).ok();
+    let quota = if let Some(max) = read("/sys/fs/cgroup/cpu.max") {
+        let mut it = max.split_whitespace();
+        match (it.next().and_then(|q| q.parse::<f64>().ok()), it.next().and_then(|p| p.parse::<f64>().ok())) {
+            (Some(q), Some(p)) if p > 0.0 => Some(q / p),
+            _ => None,
+        }
+    } else {
+        match (read("/sys/fs/cgroup/cpu/cpu.cfs_quota_us"), read("/sys/fs/cgroup/cpu/cpu.cfs_period_us")) {
+            (Some(q), Some(p)) => match (q.trim().parse::<f64>(), p.trim().parse::<f64>()) {
+                (Ok(q), Ok(p)) if q > 0.0 && p > 0.0 => Some(q / p),
+                _ => None,
+            },
+            _ => None,
+        }
+    };
+    match quota {
+        Some(q) => visible.min(q.ceil().max(1.0) as usize),
+        None => visible,
+    }
 }
 
 async fn serve(cfg: app::Config, cpus: usize, started: Instant) -> Result<()> {
@@ -53,7 +80,8 @@ async fn serve(cfg: app::Config, cpus: usize, started: Instant) -> Result<()> {
         cfg.default_engine_version.clone(),
         !cfg.no_download,
     );
-    let concurrency = cfg.concurrency.unwrap_or(cpus).max(1);
+    // Runs are partly I/O-bound (process start, state I/O): allow overlap even on 1 CPU.
+    let concurrency = cfg.concurrency.unwrap_or(cpus.max(2)).max(1);
     let mut url_key = [0u8; 32];
     util::random_bytes(&mut url_key);
     if cfg.site_token.is_none() && tokens.is_empty() {

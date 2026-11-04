@@ -1,8 +1,10 @@
-# Benchmark report: OTF vs Terrakube vs Atlantis
+# Benchmark report: OTF vs Terrakube vs Atlantis (and the Cairn MVP)
 
-All three were measured on the same host with the same OpenTofu config, using
+All tools were measured on the same host with the same OpenTofu config, using
 the harness in [`../bench`](../bench/README.md). The raw numbers are in
-[`../bench/results`](../bench/results/).
+[`../bench/results`](../bench/results/), and
+[`SUMMARY.md`](../bench/results/SUMMARY.md) has every row for every tool. The
+Cairn MVP's results are [at the end](#cairn-mvp-vs-the-three).
 
 **Summary.** OTF and Atlantis are small and fast: one Go process each,
 10–14 MiB idle, and a plan+apply of 100 resources in about 0.5 s, of which
@@ -17,7 +19,8 @@ OpenTofu itself needs 0.17 s. Terrakube is in a different class:
 OTF's one weak spot is its workspace list API, at 18 req/s for 50 workspaces,
 caused by per-row permission queries. Atlantis's is Forgejo/Gitea lock
 handling. Cairn's spec sets budgets that beat the best measured number in
-each row.
+each row. The Cairn MVP meets them in every row it implements; the PR
+workflow isn't built yet.
 
 ## Setup
 
@@ -213,12 +216,12 @@ beat, not Terrakube's.
 
 ## What it means for tesseract
 
-| Constraint | OTF | Terrakube | Atlantis | Cairn (spec budget) |
+| Constraint | OTF | Terrakube | Atlantis | Cairn MVP (measured) |
 |---|---|---|---|---|
-| Memory on a Pi already in swap | ~36 MiB with its own Postgres; ~13 MiB using the existing one | ≥ 3.3 GiB of limits to start; 2.4 GiB+ RSS if left uncapped | ~10 MiB | ≤ 8 MiB with SQLite |
-| Time to a PR plan | ~0.2 s + webhook | ~11 s, and runs queue | ~1.6 s | ≤ tofu + 0.5 s |
-| Forgejo | ✔ | ✘ | ✔ (lock leak) | ✔ |
-| Policies, drift, Vault/OpenBao credentials | ✘ | ✔ | partial | ✔ |
+| Memory on a Pi already in swap | ~36 MiB with its own Postgres; ~13 MiB using the existing one | ≥ 3.3 GiB of limits to start; 2.4 GiB+ RSS if left uncapped | ~10 MiB | **1.6 MiB** idle; starts in a 6 MiB limit |
+| Time to a PR plan | ~0.2 s + webhook | ~11 s, and runs queue | ~1.6 s | not built yet (budget ≤ tofu + 0.5 s); a run takes 0.19 s |
+| Forgejo | ✔ | ✘ | ✔ (lock leak) | planned (M2) |
+| Policies, drift, Vault/OpenBao credentials | ✘ | ✔ | partial | planned (M2–M3) |
 
 ## Caveats
 
@@ -237,3 +240,72 @@ beat, not Terrakube's.
   the registry. The locally built image was only used to run it.
 - **Terrakube ran its smallest viable stack** (no MinIO, Traefik or LDAP), which
   only flatters it.
+
+## Cairn MVP vs the three
+
+Cairn 0.1.0 (`crates/cairnd`) was measured with the same harness
+(`bench/cairn/run.py`). For runs and lists it makes **the same TFE API calls
+with the same 0.1 s status polling** as the OTF driver. Its container is a
+glibc build on `scratch`, about 5 MiB compressed, with the data directory on a
+bind mount and OpenTofu 1.11.6 pre-seeded like the others. Cold starts and the
+trivial read are medians of repeated back-to-back trials (`cold_start.py`,
+`trivial_api.py`).
+
+| All host CPUs | OTF | Terrakube | Atlantis | **Cairn** |
+|---|---|---|---|---|
+| Containers / compressed amd64 image | 2 / 35 MiB | 7 / 999 MiB | 1 / 60 MiB | **1 / 5 MiB** |
+| Cold start → healthy (median of 10) | 0.42 s | 25.6 s (1 sample) | 0.35 s | **0.17 s** |
+| … of which the app's own startup | 0.18 s | — | 0.05 s | **0.005 s** |
+| Idle RSS, whole stack | 36 MiB | 2,405 MiB | 10 MiB | **1.6 MiB** |
+| Idle CPU over 56 s | 10 ms (otfd) + Postgres | 1 s | 20 ms | **0 ms** |
+| Smallest memory limit it starts in | 16 MiB | 3,328 MiB | 16 MiB | **6 MiB** (Docker's minimum) |
+| List 50 workspaces: 1 client p50 | 152 ms | 99 ms | n/a | **0.5 ms** |
+| List 50 workspaces: 16 clients | 18 req/s | 31 req/s | n/a | **8,640 req/s** (p99 4.6 ms) |
+| Trivial authenticated read, 16 clients | — | — | 33,012 req/s (p99 3.1 ms) | **50,596 req/s** (p99 2.1 ms) |
+| Create → applied, median of 5 | 0.44 s | 26.95 s | 0.57 s | **0.20 s** (0.19 s with long-poll) |
+| No-op run | 0.24 s | 10.63 s | n/a | **0.21 s** |
+| 5 runs at once | 1.01 s | 146.5 s | 1.09 s | **0.74 s** |
+| Peak RSS, 5 runs at once (incl. tofu) | 154 MiB | 2,559 MiB | 103 MiB | **81 MiB** |
+| CPU per run, whole stack | 0.66 s | 7.96 s | 0.60 s | **0.34 s** |
+
+| 1-CPU budget | OTF | Terrakube | Atlantis | **Cairn** |
+|---|---|---|---|---|
+| Cold start → healthy | 0.64 s | 94.4 s | 0.26 s | **0.19 s** |
+| List 50 workspaces: 16 clients | 5 req/s | 6 req/s | n/a | **4,468 req/s** |
+| Trivial authenticated read, 16 clients | — | — | 28,255 req/s (p99 2.6 ms) | **44,175 req/s** (p99 2.1 ms) |
+| Create → applied | 0.78 s | 28.9 s | 0.72 s | **0.51 s** |
+| No-op run | 0.50 s | 11.1 s | n/a | **0.36 s** |
+| 5 runs at once | 4.1 s | 147.5 s | 3.29 s | **2.41 s** |
+| Peak RSS, 5 runs at once | 186 MiB | 1,714 MiB | 106 MiB | **81 MiB** |
+
+**Not compared yet:** the PR workflow (Atlantis: plan comment 1.6 s after the
+PR opens), because Cairn has no VCS integration yet, and arm64 images (Cairn
+isn't cross-built yet).
+
+### What made the difference
+
+These were measured while building the MVP; each one is visible in the
+history of `bench/results`.
+
+| Change | Effect |
+|---|---|
+| No fixed sleeps or polling loops: phases advance on child exit, and waiters use long-poll or SSE | 0.19 s from create to applied, against 0.17 s of OpenTofu work |
+| Turning off SQLite's memory statistics (`SQLITE_CONFIG_MEMSTATUS = 0`), whose global mutex serialized every reader connection | List throughput ×3.2 (3.1k → 9.9k req/s on the glibc build) |
+| Typed serialization for TFE responses instead of `serde_json::Value` trees, with pre-sized buffers | Fewer allocations and copies on the hot path |
+| The system allocator instead of mimalloc | Idle RSS 11.2 → 1.6 MiB, and 24 → 3.7 MiB after load, at a cost of ~25 % peak throughput |
+| glibc instead of musl for the image | musl's `memcpy` halved list throughput (5.4k vs 9.9k req/s) |
+| One `tofu apply -auto-approve` instead of `plan -out` + `apply` for auto-apply runs | Saves a process start and a plan-file round trip: 0.20 → 0.16 s per run with long-poll |
+| `GOGC=50` for OpenTofu processes (configurable, `0` turns it off) | tofu's anonymous memory drops 26.6 → 18.7 MiB per process, for ~30 ms more per apply; peak with 5 parallel runs 104 → 81 MiB |
+| Single-layer image, data dir created with the right owner | Faster `docker run`; the benchmark harness also stopped copying 113 MB right before each start, which had inflated the first cold-start numbers |
+
+### Caveats specific to Cairn
+
+- It implements less than the others today (no VCS, policies, UI or SSO); see
+  the [README status table](../README.md#mvp-status). Those features have to
+  arrive without breaking the budgets, which the harness will check.
+- Its state lives in SQLite on the same host. OTF's numbers include a Postgres
+  round trip per query, which is part of OTF's design, not an artifact.
+- `GOGC=50` trades about 20 % more OpenTofu CPU for 30 % less memory. Even so,
+  Cairn uses less CPU per run than any of the others, because the orchestrator
+  itself does almost nothing.
+

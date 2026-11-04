@@ -7,6 +7,9 @@ license.workspace = true
 
 [features]
 default = ["download"]
+# mimalloc: ~30% more API throughput under heavy concurrency, but ~10 MiB more
+# resident memory at idle (1.5 vs 11 MiB). Off by default: small hosts first.
+mimalloc = ["dep:mimalloc"]
 # Download OpenTofu releases (checksum-verified) when a stack asks for a version
 # that is not cached. Without it, engines must be pre-seeded or on PATH.
 download = ["dep:ureq", "dep:zip"]
@@ -19,10 +22,10 @@ chacha20poly1305 = "0.10"
 clap = { version = "4", features = ["derive", "env"] }
 flate2 = "1"
 hex = "0.4"
-mimalloc = { version = "0.1", default-features = false }
+mimalloc = { version = "0.1", default-features = false, optional = true }
 rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"
 tar = "0.4"
 time = "0.3"

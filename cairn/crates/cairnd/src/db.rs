@@ -118,8 +118,19 @@ fn open(path: &Path) -> Result<Connection> {
     Ok(c)
 }
 
+/// Process-wide SQLite settings; must run before the first connection.
+fn configure_sqlite() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| unsafe {
+        // Memory statistics take a global mutex on every SQLite allocation,
+        // which serializes all reader connections. We don't use them.
+        rusqlite::ffi::sqlite3_config(rusqlite::ffi::SQLITE_CONFIG_MEMSTATUS, 0);
+    });
+}
+
 impl Db {
     pub fn open(path: &Path, readers: usize) -> Result<Self> {
+        configure_sqlite();
         let writer = open(path)?;
         migrate(&writer)?;
         let readers = (0..readers.max(1))

@@ -13,6 +13,7 @@ OTF's and Terrakube's executor containers), so treat these as floors.
 
     BENCH_WORK=... python3 memory_floor.py [otf] [terrakube] [atlantis]
 """
+import json
 import os
 import sys
 import time
@@ -112,13 +113,27 @@ def atlantis():
     return out
 
 
+def cairn():
+    sys.path.insert(0, os.path.join(HERE, "cairn"))
+    import run as cr
+    cr.build_image()
+    out = {"cairnd": probe("cairn-cairnd", cr.cairnd_cmd(), f"{cr.BASE}/healthz", [6, 8, 10, 12, 16], 60)}
+    sys.modules.pop("run")
+    sys.path.pop(0)
+    return out
+
+
 def main():
-    tools = sys.argv[1:] or ["otf", "terrakube", "atlantis"]
-    out = {}
+    tools = sys.argv[1:] or ["otf", "terrakube", "atlantis", "cairn"]
+    # Merge with earlier results so tools can be (re)measured one at a time.
+    path = os.path.join(h.RESULTS, "memory-floor.json")
+    out = json.load(open(path)) if os.path.exists(path) else {}
+    out.pop("host", None)
     for t in tools:
         h.log("memory floor:", t)
         out[t] = globals()[t]()
-    h.save("memory-floor", {"note": __doc__.strip().splitlines()[0], **out})
+    out["note"] = __doc__.strip().splitlines()[0]
+    h.save("memory-floor", out)
 
 
 if __name__ == "__main__":

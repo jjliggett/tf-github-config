@@ -1,15 +1,94 @@
 # cairn
 
-Research and specification for **Cairn**, a lightweight OpenTofu automation
-server and CLI written in Rust. The aim is OTF's footprint, Terrakube's
-features, Atlantis's PR workflow, and Spacelift's model and CLI ergonomics,
-with an MCP server for agents.
+**Cairn** is a lightweight OpenTofu automation server and CLI written in
+Rust. The aim is OTF's footprint, Terrakube's features, Atlantis's PR
+workflow, and Spacelift's model and CLI ergonomics, with an MCP server for
+agents. This directory holds the MVP implementation, the specification, and
+the benchmarks that set its targets.
 
 | Path | What |
 |---|---|
+| [`crates/cairnd`](crates/cairnd) | The server: API, embedded runner, state, events |
+| [`crates/cairn-cli`](crates/cairn-cli) | `cairn`: the CLI and `cairn mcp serve` |
+| [`tests/e2e.py`](tests/e2e.py) | End-to-end tests against a real `cairnd`, `cairn` and OpenTofu |
 | [`docs/SPEC.md`](docs/SPEC.md) | The specification: concepts, behaviour, APIs, CLI, MCP server, security, budgets, Rust implementation plan and milestones |
-| [`docs/benchmark-report.md`](docs/benchmark-report.md) | What we measured and what it means |
+| [`docs/benchmark-report.md`](docs/benchmark-report.md) | What we measured, including Cairn against OTF, Terrakube and Atlantis |
 | [`bench/`](bench/) | Reproducible benchmark harness (Docker + cgroup accounting) and raw results |
+
+## Quick start
+
+```sh
+cargo build --release
+export CAIRN_SITE_TOKEN=$(openssl rand -hex 24)
+./target/release/cairnd --data ./cairn-data &        # listens on 127.0.0.1:8833
+
+./target/release/cairn login --host http://127.0.0.1:8833 --token "$CAIRN_SITE_TOKEN"
+cairn stack create demo
+cairn stack preview --stack demo --dir ./my-module    # proposed run: plan only
+cairn stack deploy  --stack demo --dir ./my-module    # tracked run: plan, ask, apply
+cairn stack outputs --stack demo
+```
+
+`cairnd` downloads the OpenTofu version a stack asks for (default 1.11.6) from
+GitHub releases and verifies its SHA-256 checksum. To stay offline, use
+`--no-download` and put the binary at `<data>/engines/<version>/tofu`, or pin
+one binary for every stack with `--tofu-bin`. Every flag has a `CAIRN_*`
+environment variable; see `cairnd --help`. Container images:
+[`Dockerfile`](Dockerfile) (glibc on scratch, ~5 MiB compressed) and
+[`Dockerfile.static`](Dockerfile.static) (musl).
+
+### Agents (MCP)
+
+```sh
+claude mcp add cairn -- cairn mcp serve          # Claude Code; any stdio MCP client works
+cairn mcp serve --read-only                      # inspection tools only
+```
+
+The tools are `list_stacks`, `get_stack`, `list_runs`, `get_run`,
+`get_plan_summary`, `get_run_diagnostics`, `get_run_logs`, `get_outputs`,
+`list_state_versions`, `trigger_preview`, `trigger_deploy`, `confirm_run`,
+`discard_run` and `cancel_run`, plus the prompts `review-plan` and
+`triage-failed-run`. Every tool is annotated as read-only, destructive or
+idempotent. Runs started from MCP never auto-apply. `confirm_run` always asks
+the person through MCP elicitation; clients that can't elicit get
+`needs_human` with the `cairn run confirm …` command to run instead.
+
+### Using it from OpenTofu directly (HTTP backend)
+
+```hcl
+terraform {
+  backend "http" {
+    address        = "http://cairn:8833/api/v1/stacks/<stack-id>/state"
+    lock_address   = "http://cairn:8833/api/v1/stacks/<stack-id>/state/lock"
+    unlock_address = "http://cairn:8833/api/v1/stacks/<stack-id>/state/lock"
+    lock_method    = "POST"
+    unlock_method  = "DELETE"
+    username       = "cairn"   # ignored
+    # password: set TF_HTTP_PASSWORD to a Cairn token
+  }
+}
+```
+
+State written this way is versioned like state from managed runs, and the
+managed runner picks it up.
+
+## MVP status
+
+| Area | Implemented now | Next (see SPEC §13) |
+|---|---|---|
+| Server | One binary; SQLite (WAL); native `/api/v1` (spaces, stacks, variables, configs, runs, logs, outputs, state, locks, tokens, SSE events, long-poll); Prometheus `/metrics` | Postgres backend, OpenAPI document |
+| Runs | Proposed and tracked runs, auto-apply or confirm/discard, cancel (SIGINT, then kill), per-stack queue, configurable concurrency, no fixed sleeps, structured plan summaries | Destroy and task runs, dependencies, drift schedules |
+| State | Versioned, deduplicated by SHA-256; OpenTofu `http` backend with locking; serial/lineage checks | Encryption at rest for state, rollback command |
+| TFE API | Organizations, workspaces (with pagination), configuration versions with pre-signed uploads, runs and actions, plans and applies with logs, current state version and outputs, workspace locks | `tofu login` and the `cloud {}` block over TLS, state-version upload, the `tfe` provider, teams |
+| Security | Site token plus hashed API tokens; sensitive variables encrypted (ChaCha20-Poly1305); runs get a clean environment | OIDC (Authentik), RBAC per space, workload identity / OpenBao |
+| VCS, policy, registry | — | Forgejo/Gitea webhooks and PR comments (with Atlantis's lock leak fixed), Rego policies, module registry |
+| CLI / MCP | Login, spaces, stacks, preview/deploy with live logs, runs, variables, state, outputs, raw API; MCP over stdio with a human gate on applies | Repo-aware stack inference, MCP over HTTP with OAuth |
+
+Tests: `cargo test` (unit) and
+`CAIRND=target/debug/cairnd TOFU=$(which tofu) python3 tests/e2e.py`
+(17 end-to-end tests).
+
+## Research material
 | `upstream/otf` | Submodule: [leg100/otf](https://github.com/leg100/otf) at `v0.6.3` |
 | `upstream/terrakube` | Submodule: [terrakube-io/terrakube](https://github.com/terrakube-io/terrakube) at `2.33.3` |
 | `upstream/atlantis` | Submodule: [runatlantis/atlantis](https://github.com/runatlantis/atlantis) at `v0.49.0` |

@@ -145,13 +145,28 @@ pub struct ListQ {
     after: Option<String>,
 }
 
-pub async fn list_stacks(State(app): State<AppRef>, Query(q): Query<ListQ>) -> ApiResult<Json<Value>> {
+#[derive(Serialize)]
+struct Page<T: Serialize, N: Serialize> {
+    items: Vec<T>,
+    next: Option<N>,
+}
+
+/// Serialize straight into a pre-sized buffer (no intermediate `Value` tree).
+fn json_bytes<T: Serialize>(v: &T, capacity: usize) -> Response {
+    let mut buf = Vec::with_capacity(capacity);
+    match serde_json::to_writer(&mut buf, v) {
+        Ok(()) => ([(header::CONTENT_TYPE, "application/json")], buf).into_response(),
+        Err(e) => ApiError::from(anyhow::Error::from(e)).into_response(),
+    }
+}
+
+pub async fn list_stacks(State(app): State<AppRef>, Query(q): Query<ListQ>) -> ApiResult<Response> {
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let items = app
         .db
         .read(|c| store::list_stacks(c, q.space.as_deref(), q.after.as_deref().unwrap_or(""), limit))?;
     let next = (items.len() as i64 == limit).then(|| items.last().map(|s| format!("{}/{}", s.space, s.name))).flatten();
-    Ok(Json(json!({ "items": items, "next": next })))
+    Ok(json_bytes(&Page { items, next }, 512 + limit as usize * 600))
 }
 
 #[derive(Deserialize)]
@@ -486,13 +501,18 @@ pub struct RunsQ {
     before: Option<i64>,
 }
 
-pub async fn list_runs(State(app): State<AppRef>, Path(id): Path<String>, Query(q): Query<RunsQ>) -> ApiResult<Json<Value>> {
+pub async fn list_runs(State(app): State<AppRef>, Path(id): Path<String>, Query(q): Query<RunsQ>) -> ApiResult<Response> {
     let s = find_stack(&app, &id, q.space.as_deref())?;
     let limit = q.limit.unwrap_or(20).clamp(1, 200);
     let runs = app.db.read(|c| store::list_runs(c, &s.id, q.before.unwrap_or(i64::MAX), limit))?;
     let next = (runs.len() as i64 == limit).then(|| runs.last().map(|r| r.seq)).flatten();
     let items: Vec<RunView> = runs.into_iter().map(run_view).collect();
-    Ok(Json(json!({ "items": items, "next_before": next })))
+    #[derive(Serialize)]
+    struct RunPage {
+        items: Vec<RunView>,
+        next_before: Option<i64>,
+    }
+    Ok(json_bytes(&RunPage { items, next_before: next }, 512 + limit as usize * 700))
 }
 
 #[derive(Deserialize)]

@@ -108,11 +108,18 @@ Each driver accepts `IDLE_SECONDS`, `N_WORKSPACES`, `SERIAL_RUNS`,
 `BENCH_API_N` to change the request count (default 3,200; 640 in constrained
 mode), and `--keep` to leave the containers running afterwards.
 
-Two extra experiments aren't part of `run-all.sh`:
+Cairn (this repository's server) has its own driver, `cairn/run.py`. It makes
+the same TFE API calls, with the same polling, as `otf/run.py`, and also
+measures runs with long-poll. Run it with `ONLY=cairn ./run-all.sh` or directly;
+`--rebuild` rebuilds the image from `cargo build --release`.
+
+Extra experiments that aren't part of `run-all.sh`:
 
 ```sh
-python3 memory_floor.py      # smallest hard memory limit each app service starts under -> results/memory-floor.json
-python3 otf/query_count.py   # Postgres transactions per OTF API request             -> results/otf-query-count.json
+python3 memory_floor.py [tool…]   # smallest hard memory limit each app service starts under -> results/memory-floor.json
+python3 cold_start.py [tool…]     # 10 cold starts per tool, medians                       -> results/cold-start.json
+python3 trivial_api.py            # Atlantis /api/locks vs Cairn /api/v1/whoami, back to back -> results/trivial-api[-1cpu].json
+python3 otf/query_count.py        # Postgres transactions per OTF API request              -> results/otf-query-count.json
 ```
 
 ## Result files

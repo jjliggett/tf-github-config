@@ -1,0 +1,36 @@
+name: cairn
+on:
+  push:
+    branches:
+      - root
+    paths:
+      - 'cairn/**'
+      - '.github/workflows/cairn.yaml'
+  pull_request:
+    paths:
+      - 'cairn/**'
+      - '.github/workflows/cairn.yaml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cairn
+    env:
+      TOFU_VERSION: 1.11.6
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+      - name: Install OpenTofu
+        run: |
+          curl -sSLo tofu.zip "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.zip"
+          curl -sSLo sums "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_SHA256SUMS"
+          grep " tofu_${TOFU_VERSION}_linux_amd64.zip$" sums | sed 's/tofu_.*zip$/tofu.zip/' | sha256sum -c
+          unzip -q tofu.zip tofu -d "$RUNNER_TEMP" && rm tofu.zip sums
+      - run: cargo build --locked
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - name: End-to-end tests
+        run: TOFU="$RUNNER_TEMP/tofu" python3 tests/e2e.py -v

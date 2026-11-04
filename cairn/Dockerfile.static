@@ -1,0 +1,19 @@
+# Fully static variant (musl). Smaller and libc-free, but musl's memcpy makes
+# API-heavy workloads ~45% slower than the glibc image (see Dockerfile).
+#
+#   CC_x86_64_unknown_linux_musl=musl-gcc \
+#     cargo build --release --target x86_64-unknown-linux-musl -p cairnd
+#   docker build -t cairnd:static -f Dockerfile.static target/x86_64-unknown-linux-musl/release
+FROM alpine:3.22 AS certs
+RUN mkdir -p /data /tmp2 && chown 65532:65532 /data && chmod 1777 /tmp2
+
+FROM scratch
+COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=certs --chown=65532:65532 /data /data
+COPY --from=certs /tmp2 /tmp
+COPY cairnd /cairnd
+USER 65532:65532
+ENV CAIRN_DATA=/data CAIRN_LISTEN=0.0.0.0:8833
+VOLUME /data
+EXPOSE 8833
+ENTRYPOINT ["/cairnd"]

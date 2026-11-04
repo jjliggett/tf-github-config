@@ -1,0 +1,28 @@
+{
+  "atlantis": {
+    "endpoint": "api/locks",
+    "reps": 3,
+    "rps_median": 28255.1,
+    "p99_ms_median": 2.6,
+    "p50_ms_median": 0.2
+  },
+  "cairn": {
+    "endpoint": "api/v1/whoami",
+    "reps": 3,
+    "rps_median": 44175.4,
+    "p99_ms_median": 2.1,
+    "p50_ms_median": 0.2
+  },
+  "host": {
+    "cpus": 4,
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "mem_mib": 16091,
+    "kernel": "6.18.44-fc-v233",
+    "arch": "x86_64",
+    "date": "2026-11-04T10:53:28Z"
+  },
+  "constraint": {
+    "cpus": 1.0,
+    "cgroup_parent": "/cairn-bench-1cpu"
+  }
+}

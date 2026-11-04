@@ -11,7 +11,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 export BENCH_WORK="${BENCH_WORK:-/tmp/cairn-bench}"
 export PATH="$PATH:$HOME/go/bin"
-ONLY="${ONLY:-otf terrakube atlantis}"
+ONLY="${ONLY:-otf terrakube atlantis cairn}"
 CPU_MODES="${CPU_MODES-1}"
 mkdir -p "$BENCH_WORK" results
 

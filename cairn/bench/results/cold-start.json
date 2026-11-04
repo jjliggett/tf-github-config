@@ -1,0 +1,62 @@
+{
+  "otf": {
+    "trials": 10,
+    "docker_run_to_healthy_s": {
+      "n": 10,
+      "min": 0.34,
+      "median": 0.42,
+      "max": 0.81,
+      "mean": 0.48
+    },
+    "process_ready_s": {
+      "n": 10,
+      "min": 0.14,
+      "median": 0.18,
+      "max": 0.64,
+      "mean": 0.23
+    }
+  },
+  "atlantis": {
+    "trials": 10,
+    "docker_run_to_healthy_s": {
+      "n": 10,
+      "min": 0.3,
+      "median": 0.35,
+      "max": 0.4,
+      "mean": 0.35
+    },
+    "process_ready_s": {
+      "n": 10,
+      "min": 0.04,
+      "median": 0.05,
+      "max": 0.06,
+      "mean": 0.05
+    }
+  },
+  "cairn": {
+    "trials": 10,
+    "docker_run_to_healthy_s": {
+      "n": 10,
+      "min": 0.15,
+      "median": 0.17,
+      "max": 0.19,
+      "mean": 0.17
+    },
+    "process_ready_s": {
+      "n": 10,
+      "min": 0.0,
+      "median": 0.01,
+      "max": 0.01,
+      "mean": 0.01
+    }
+  },
+  "constraint": null,
+  "host": {
+    "cpus": 4,
+    "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "mem_mib": 16091,
+    "kernel": "6.18.44-fc-v233",
+    "arch": "x86_64",
+    "date": "2026-11-04T10:57:25Z"
+  }
+}

@@ -115,8 +115,8 @@ def summary(path, t0=None, t1=None):
             "rss_mib_max": round(max(rss) / 2**20, 1),
             "ws_mib_avg": round(sum(ws) / len(ws) / 2**20, 1),
             "ws_mib_max": round(max(ws) / 2**20, 1),
-            "cpu_s": round(cpu_s, 2),
-            "cpu_pct_avg": round(100 * cpu_s / span, 2) if span > 0 else None,
+            "cpu_s": round(cpu_s, 4),
+            "cpu_pct_avg": round(100 * cpu_s / span, 4) if span > 0 else None,
         }
     tot = {k: round(sum(v[k] for v in out.values()), 1)
            for k in ("rss_mib_avg", "rss_mib_max", "ws_mib_avg", "ws_mib_max", "cpu_s")}

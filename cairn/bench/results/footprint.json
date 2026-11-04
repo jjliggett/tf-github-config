@@ -32,5 +32,12 @@
     },
     "maven_declared": 125,
     "npm_declared": 70
+  },
+  "cairn": {
+    "version": "0.1.0",
+    "loc": {
+      "Rust": 4306
+    },
+    "cargo_direct": 20
   }
 }

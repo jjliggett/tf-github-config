@@ -9,9 +9,11 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use crate::api::native::{enqueue_run, find_run, save_config, valid_name};
 use crate::app::{ApiError, ApiResult, AppRef};
@@ -105,30 +107,125 @@ pub async fn entitlements(State(app): State<AppRef>, Path(org): Path<String>) ->
 
 // ---------------------------------------------------------------- workspaces
 
-fn ws_json(app: &AppRef, s: &Stack, perms: &Value) -> Value {
-    let rel = |id: &Option<String>, t: &str| match id {
-        Some(i) => json!({"data": {"id": i, "type": t}}),
-        None => json!({"data": null}),
-    };
-    json!({
-        "id": s.id, "type": "workspaces",
-        "attributes": {
-            "name": s.name, "description": s.description, "auto-apply": s.auto_apply,
-            "created-at": s.created_at, "updated-at": s.updated_at, "locked": s.locked,
-            "execution-mode": "remote", "operations": true, "environment": "default",
-            "terraform-version": s.engine_version.clone().unwrap_or_else(|| app.engines.default_version.clone()),
-            "working-directory": s.project_root, "tag-names": s.labels, "speculative-enabled": true,
-            "structured-run-output-enabled": true, "queue-all-runs": false, "file-triggers-enabled": false,
-            "global-remote-state": false, "trigger-prefixes": [], "trigger-patterns": [],
-            "actions": {"is-destroyable": true}, "permissions": perms,
+// Workspaces are serialized through typed structs (no intermediate
+// `serde_json::Value` trees): list responses are the hot path.
+
+#[derive(Serialize)]
+struct Ref<'a> {
+    id: &'a str,
+    #[serde(rename = "type")]
+    kind: &'static str,
+}
+
+#[derive(Serialize)]
+struct Rel<'a> {
+    data: Option<Ref<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct WsAttrs<'a> {
+    name: &'a str,
+    description: &'a str,
+    auto_apply: bool,
+    created_at: &'a str,
+    updated_at: &'a str,
+    locked: bool,
+    execution_mode: &'static str,
+    operations: bool,
+    environment: &'static str,
+    terraform_version: &'a str,
+    working_directory: &'a str,
+    tag_names: &'a [String],
+    speculative_enabled: bool,
+    structured_run_output_enabled: bool,
+    queue_all_runs: bool,
+    file_triggers_enabled: bool,
+    global_remote_state: bool,
+    trigger_prefixes: [&'static str; 0],
+    trigger_patterns: [&'static str; 0],
+    actions: &'static RawValue,
+    permissions: &'static RawValue,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct WsRels<'a> {
+    organization: Rel<'a>,
+    current_run: Rel<'a>,
+    current_state_version: Rel<'a>,
+}
+
+#[derive(Serialize)]
+struct WsLinks {
+    #[serde(rename = "self")]
+    self_: String,
+}
+
+#[derive(Serialize)]
+pub struct WsDoc<'a> {
+    id: &'a str,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    attributes: WsAttrs<'a>,
+    relationships: WsRels<'a>,
+    links: WsLinks,
+}
+
+fn raw(s: &'static str) -> &'static RawValue {
+    Box::leak(RawValue::from_string(s.to_string()).expect("valid JSON"))
+}
+
+/// Admin token: everything is allowed. Built once per process.
+fn permissions_raw() -> &'static RawValue {
+    static P: OnceLock<&'static RawValue> = OnceLock::new();
+    P.get_or_init(|| raw(&*Box::leak(permissions().to_string().into_boxed_str())))
+}
+
+fn actions_raw() -> &'static RawValue {
+    static A: OnceLock<&'static RawValue> = OnceLock::new();
+    A.get_or_init(|| raw(r#"{"is-destroyable":true}"#))
+}
+
+fn ws_doc<'a>(app: &'a AppRef, s: &'a Stack) -> WsDoc<'a> {
+    let rel = |id: &'a Option<String>, kind| Rel { data: id.as_deref().map(|id| Ref { id, kind }) };
+    WsDoc {
+        id: &s.id,
+        kind: "workspaces",
+        attributes: WsAttrs {
+            name: &s.name,
+            description: &s.description,
+            auto_apply: s.auto_apply,
+            created_at: &s.created_at,
+            updated_at: &s.updated_at,
+            locked: s.locked,
+            execution_mode: "remote",
+            operations: true,
+            environment: "default",
+            terraform_version: s.engine_version.as_deref().unwrap_or(&app.engines.default_version),
+            working_directory: &s.project_root,
+            tag_names: &s.labels,
+            speculative_enabled: true,
+            structured_run_output_enabled: true,
+            queue_all_runs: false,
+            file_triggers_enabled: false,
+            global_remote_state: false,
+            trigger_prefixes: [],
+            trigger_patterns: [],
+            actions: actions_raw(),
+            permissions: permissions_raw(),
         },
-        "relationships": {
-            "organization": {"data": {"id": s.space, "type": "organizations"}},
-            "current-run": rel(&s.latest_run_id, "runs"),
-            "current-state-version": rel(&s.current_state_id, "state-versions"),
+        relationships: WsRels {
+            organization: Rel { data: Some(Ref { id: &s.space, kind: "organizations" }) },
+            current_run: rel(&s.latest_run_id, "runs"),
+            current_state_version: rel(&s.current_state_id, "state-versions"),
         },
-        "links": {"self": format!("/api/v2/organizations/{}/workspaces/{}", s.space, s.name)},
-    })
+        links: WsLinks { self_: format!("/api/v2/organizations/{}/workspaces/{}", s.space, s.name) },
+    }
+}
+
+fn ws_json(app: &AppRef, s: &Stack, _perms: &Value) -> Value {
+    serde_json::to_value(ws_doc(app, s)).unwrap_or(Value::Null)
 }
 
 fn find_ws(app: &AppRef, id: &str) -> ApiResult<Stack> {
@@ -147,16 +244,22 @@ pub async fn list_workspaces(
     if stacks.is_empty() && page == 1 {
         find_org(&app, &org)?; // 404 for unknown organizations
     }
-    let perms = permissions();
-    let data: Vec<Value> = stacks.iter().map(|s| ws_json(&app, s, &perms)).collect();
     let pages = (total + size - 1) / size;
-    Ok(ok(
-        StatusCode::OK,
-        json!({"data": data, "meta": {"pagination": {
+    #[derive(Serialize)]
+    struct Page<'a> {
+        data: Vec<WsDoc<'a>>,
+        meta: Value,
+    }
+    let body = Page {
+        data: stacks.iter().map(|s| ws_doc(&app, s)).collect(),
+        meta: json!({"pagination": {
             "current-page": page, "page-size": size, "total-count": total, "total-pages": pages,
             "next-page": if page < pages { Some(page + 1) } else { None },
-            "prev-page": if page > 1 { Some(page - 1) } else { None }}}}),
-    ))
+            "prev-page": if page > 1 { Some(page - 1) } else { None }}}),
+    };
+    let mut bytes = Vec::with_capacity(512 + body.data.len() * 1200);
+    serde_json::to_writer(&mut bytes, &body).map_err(anyhow::Error::from)?;
+    Ok((StatusCode::OK, [(header::CONTENT_TYPE, JSONAPI)], bytes).into_response())
 }
 
 pub async fn create_workspace(State(app): State<AppRef>, Path(org): Path<String>, body: Bytes) -> ApiResult<Response> {

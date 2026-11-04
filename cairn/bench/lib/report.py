@@ -5,10 +5,10 @@ import os
 
 BENCH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 R = os.path.join(BENCH, "results")
-TOOLS = ("otf", "terrakube", "atlantis")
+TOOLS = ("otf", "terrakube", "atlantis", "cairn")
 APP = {"otf": ["otf-otfd"], "terrakube": ["tk-api", "tk-executor", "tk-registry", "tk-ui"],
-       "atlantis": ["atlantis"]}
-LABEL = {"otf": "OTF 0.6.3", "terrakube": "Terrakube 2.33.3", "atlantis": "Atlantis 0.49.0"}
+       "atlantis": ["atlantis"], "cairn": ["cairn-cairnd"]}
+LABEL = {"otf": "OTF 0.6.3", "terrakube": "Terrakube 2.33.3", "atlantis": "Atlantis 0.49.0", "cairn": "**Cairn 0.1.0**"}
 
 
 def load(name):
@@ -62,7 +62,13 @@ def section(suffix, title):
     def row(name, fn):
         lines.append(f"| {name} | " + " | ".join(fn(t, data[t]) if data[t] else "-" for t in TOOLS) + " |")
 
+    cold_rep = load("cold-start") or {}
+
     def cold(t, d):
+        rep = cold_rep.get(t)
+        if rep and not suffix:
+            return (f"**{rep['docker_run_to_healthy_s']['median']} s** (process ready "
+                    f"{rep['process_ready_s']['median']} s; median of {rep['trials']})")
         cs = d["cold_start"]
         if "all_s" in cs:
             parts = ", ".join(f"{k} {v}" for k, v in cs.items() if k != "all_s")
@@ -74,10 +80,21 @@ def section(suffix, title):
     row("Idle CPU, whole stack", lambda t, d: fmt(
         round(100 * phase(d, t, "idle", "cpu_s") / g(d, "resources", "idle", "_total", default={}).get("window_s", 60), 2)
         if phase(d, t, "idle", "cpu_s") is not None and g(d, "resources", "idle") else None, " % of a core", 2))
-    row("API read, 1 client: p50 / p95", lambda t, d: f"{fmt(g(d,'api_load','c1','p50_ms'))} / {fmt(g(d,'api_load','c1','p95_ms'))} ms")
-    row("API read, 16 clients: req/s", lambda t, d: fmt(g(d, 'api_load', 'c16', 'rps'), "", 0))
-    row("API read, 16 clients: p99", lambda t, d: fmt(g(d, 'api_load', 'c16', 'p99_ms'), " ms"))
-    row("Peak RSS during API load (stack)", lambda t, d: fmt(phase(d, t, "api_load", "rss_mib_max"), " MiB", 0))
+    # Atlantis has no inventory API; its api_load is the trivial /api/locks, shown in its own rows.
+    inv = lambda f: (lambda t, d: "n/a (no inventory API)" if t == "atlantis" else f(t, d))
+    row("List 50 workspaces, 1 client: p50 / p95", inv(lambda t, d: f"{fmt(g(d,'api_load','c1','p50_ms'))} / {fmt(g(d,'api_load','c1','p95_ms'))} ms"))
+    row("List 50 workspaces, 16 clients: req/s", inv(lambda t, d: fmt(g(d, 'api_load', 'c16', 'rps'), "", 0)))
+    row("List 50 workspaces, 16 clients: p99", inv(lambda t, d: fmt(g(d, 'api_load', 'c16', 'p99_ms'), " ms")))
+    row("Peak RSS during list load (stack)", inv(lambda t, d: fmt(phase(d, t, "api_load", "rss_mib_max"), " MiB", 0)))
+    # Back-to-back medians (trivial_api.py) where available, else the driver's single pass.
+    tri = load("trivial-api" + suffix) or {}
+    def triv(t, d, key):
+        if t in tri:
+            return tri[t]["rps_median" if key == "rps" else "p99_ms_median"]
+        src = g(d, "api_load") if t == "atlantis" else g(d, "api_trivial")
+        return g(src or {}, "c16", "rps" if key == "rps" else "p99_ms")
+    row("Trivial authenticated read, 16 clients: req/s", lambda t, d: fmt(triv(t, d, "rps"), "", 0))
+    row("Trivial authenticated read, 16 clients: p99", lambda t, d: fmt(triv(t, d, "p99"), " ms"))
     row("First run (cold engine/cache)", lambda t, d: fmt(g(d, "first_run", "total_s"), " s", 2))
     row("Run → planned, median", lambda t, d: fmt(g(d, "e2e_serial", "create_to_planned_s", "median"), " s", 2))
     row("Run → applied, median", lambda t, d: fmt(g(d, "e2e_serial", "create_to_applied_s", "median"), " s", 2))
@@ -120,6 +137,7 @@ def static_tables():
                       ["dexidp/dex:v2.43.1", "valkey/valkey:8-alpine", "postgres:16-alpine"],
                       "api, executor, registry, ui", "Dex, Valkey, Postgres (+ MinIO/S3, Traefik in the reference compose)"),
         "atlantis": (["ghcr.io/runatlantis/atlantis:v0.49.0"], [], "atlantis", "none (state backend is yours)"),
+        "cairn": (["cairn-bench/cairnd:0.1.0"], [], "cairnd", "none (SQLite built in; Postgres planned)"),
     }
     lines += ["## Static footprint", "",
               "| | " + " | ".join(LABEL[t] for t in TOOLS) + " |", "|---|" + "---|" * len(TOOLS)]

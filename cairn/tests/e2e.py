@@ -245,6 +245,28 @@ class E2E(unittest.TestCase):
         self.assertEqual(self.s.ok("GET", f"/api/v1/runs/{t['id']}")["status"], "canceled")
         self.s.ok("POST", f"/api/v1/runs/{held['id']}/discard")
 
+    def test_cancel_running_apply(self):
+        self.stack("cancel-me", auto_apply=True)
+        slow = MAIN_TF + """
+resource "terraform_data" "slow" {
+  provisioner "local-exec" {
+    command = "sleep 60"
+  }
+}
+"""
+        r = self.s.run("cancel-me", files={"main.tf": slow}, wait=False)
+        self.s.wait(r["id"], until=lambda x: x["status"] == "applying")
+        time.sleep(1)
+        t0 = time.time()
+        self.s.ok("POST", f"/api/v1/runs/{r['id']}/cancel")
+        done = self.s.wait(r["id"], until=lambda x: x["status"] in ("canceled", "errored", "applied"))
+        self.assertEqual(done["status"], "canceled")
+        self.assertLess(time.time() - t0, 15)
+        self.assertFalse(self.s.ok("GET", "/api/v1/stacks/cancel-me")["locked"])
+        # Resources created before the interrupt were kept as a state version.
+        sv = self.s.ok("GET", "/api/v1/stacks/cancel-me/state/versions")["items"]
+        self.assertGreaterEqual(len(sv), 1)
+
     def test_sensitive_variables(self):
         self.stack("vars", auto_apply=True)
         v = self.s.ok("POST", "/api/v1/stacks/vars/variables",

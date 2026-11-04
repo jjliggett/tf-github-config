@@ -83,6 +83,24 @@ def main():
             d.update(maven_deps(repo))
         d.update(npm_deps(repo))
         out[name] = d
+    # Cairn itself (this repository's Rust workspace).
+    crates = os.path.join(BENCH, "..", "crates")
+    loc_rs = {}
+    for root, _, files in os.walk(crates):
+        for f in files:
+            if f.endswith(".rs"):
+                with open(os.path.join(root, f)) as fh:
+                    loc_rs["Rust"] = loc_rs.get("Rust", 0) + sum(1 for l in fh if l.strip())
+    deps = set()
+    for c in os.listdir(crates):
+        section = None
+        for line in open(os.path.join(crates, c, "Cargo.toml")):
+            line = line.strip()
+            if line.startswith("["):
+                section = line
+            elif section == "[dependencies]" and "=" in line:
+                deps.add(line.split("=")[0].strip())
+    out["cairn"] = {"version": "0.1.0", "loc": loc_rs, "cargo_direct": len(deps)}
     path = os.path.join(BENCH, "results", "footprint.json")
     with open(path, "w") as f:
         json.dump(out, f, indent=2)

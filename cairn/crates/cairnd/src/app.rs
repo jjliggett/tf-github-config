@@ -37,9 +37,9 @@ pub struct Config {
     #[arg(long, env = "CAIRN_DEFAULT_ENGINE_VERSION", default_value = "1.11.6")]
     pub default_engine_version: String,
     /// Never download engines; they must be in <data>/engines/<version>/tofu.
-    #[arg(long, env = "CAIRN_NO_DOWNLOAD")]
+    #[arg(long, env = "CAIRN_NO_DOWNLOAD", num_args = 0..=1, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new())]
     pub no_download: bool,
-    /// Maximum plan/apply phases running at once (default: number of CPUs).
+    /// Maximum plan/apply phases running at once (default: usable CPUs, at least 2).
     #[arg(long, env = "CAIRN_CONCURRENCY")]
     pub concurrency: Option<usize>,
     /// Public base URL used in links handed to clients (default: from the Host header).
@@ -49,8 +49,13 @@ pub struct Config {
     #[arg(long, env = "CAIRN_SECRET_KEY", hide_env_values = true)]
     pub secret_key: Option<String>,
     /// Keep run workspaces after runs finish (debugging).
-    #[arg(long, env = "CAIRN_KEEP_WORKSPACES")]
+    #[arg(long, env = "CAIRN_KEEP_WORKSPACES", num_args = 0..=1, default_missing_value = "true", value_parser = clap::builder::BoolishValueParser::new())]
     pub keep_workspaces: bool,
+    /// GOGC for OpenTofu processes. 50 cuts tofu's heap memory ~30% for ~20%
+    /// more CPU, which suits small hosts; 0 leaves Go's default (100). A
+    /// stack's own `GOGC` env variable wins.
+    #[arg(long, env = "CAIRN_ENGINE_GOGC", default_value_t = 50)]
+    pub engine_gogc: u32,
     /// Tokio worker threads (default: min(CPUs, 4)).
     #[arg(long, env = "CAIRN_WORKERS")]
     pub workers: Option<usize>,
@@ -218,5 +223,5 @@ impl IntoResponse for ApiError {
 pub type ApiResult<T> = std::result::Result<T, ApiError>;
 
 pub fn load_tokens(db: &Db) -> Result<HashSet<String>> {
-    Ok(db.read(|c| crate::store::token_hashes(c))?.into_iter().collect())
+    Ok(db.read(crate::store::token_hashes)?.into_iter().collect())
 }

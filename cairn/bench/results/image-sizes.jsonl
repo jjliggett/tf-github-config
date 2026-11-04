@@ -8,3 +8,4 @@
 {"image": "dexidp/dex:v2.43.1", "amd64_compressed_bytes": 43555838, "amd64_layers": 10, "arm64_compressed_bytes": 40800057, "arm64_layers": 10}
 {"image": "valkey/valkey:8-alpine", "amd64_compressed_bytes": 17497567, "amd64_layers": 7, "arm64_compressed_bytes": 17940045, "arm64_layers": 7}
 {"image": "postgres:16-alpine", "amd64_compressed_bytes": 116064374, "amd64_layers": 11, "arm64_compressed_bytes": 113883909, "arm64_layers": 11}
+{"image": "cairn-bench/cairnd:0.1.0", "amd64_compressed_bytes": 5190820, "amd64_layers": 2, "note": "gzip -6 of docker save (not on a registry); arm64 not built yet"}

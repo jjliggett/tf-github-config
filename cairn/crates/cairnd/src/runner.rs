@@ -111,11 +111,10 @@ fn dispatch(app: &AppRef) -> Result<()> {
 
     for run in queued {
         let apply = run.status == "apply_queued";
-        if !apply && run.kind != "proposed" {
-            if held.contains(&run.stack_id) {
+        if !apply && run.kind != "proposed"
+            && held.contains(&run.stack_id) {
                 continue;
             }
-        }
         let Ok(permit) = app.sched.sem.clone().try_acquire_owned() else {
             break; // a finishing phase will kick us again
         };
@@ -237,6 +236,9 @@ impl Exec {
         if code != 0 {
             bail!("tofu init failed (exit {code})");
         }
+        if tracked && self.run.auto_apply {
+            return self.plan_and_apply_in_one(&bin, &env, started).await;
+        }
         let mut counts = (0i64, 0i64, 0i64);
         let mut changed: Vec<Value> = Vec::new();
         let mut args = vec!["plan", "-input=false", "-json", "-detailed-exitcode"];
@@ -284,6 +286,70 @@ impl Exec {
         }
         self.app.db.write(|c| store::transition(c, &run_id, &["planning"], "planned"))?;
         publish(&self.app, &self.stack.id, &run_id, "planned");
+        Ok(())
+    }
+
+    /// Auto-apply fast path: one `tofu apply -auto-approve` process instead of
+    /// `plan -out` + `apply <planfile>`. Nothing sits between plan and apply in
+    /// this case (no confirmation), so the saved plan would only cost a second
+    /// process start and a plan-file round trip. Status still moves through
+    /// planned -> applying when the plan summary appears in the JSON stream.
+    async fn plan_and_apply_in_one(&mut self, bin: &Path, env: &[(String, String)], started: Instant) -> Result<()> {
+        let (app, run_id, stack_id) = (self.app.clone(), self.run.id.clone(), self.stack.id.clone());
+        let mut counts = (0i64, 0i64, 0i64);
+        let mut changed: Vec<Value> = Vec::new();
+        let mut planned = false;
+        let mut plan_secs = 0.0;
+        let code = self
+            .tofu(bin, &["apply", "-input=false", "-json", "-auto-approve"], env, |v| match v["type"].as_str() {
+                Some("planned_change") if changed.len() < MAX_CHANGES_LISTED => {
+                    let c = &v["change"];
+                    changed.push(json!({"address": c["resource"]["addr"], "action": c["action"]}));
+                }
+                Some("change_summary") if !planned && v["changes"]["operation"] == "plan" => {
+                    let c = &v["changes"];
+                    counts = (c["add"].as_i64().unwrap_or(0), c["change"].as_i64().unwrap_or(0), c["remove"].as_i64().unwrap_or(0));
+                    planned = true;
+                    plan_secs = started.elapsed().as_secs_f64();
+                    let has = counts.0 + counts.1 + counts.2 > 0;
+                    let summary = json!({"add": counts.0, "change": counts.1, "destroy": counts.2, "resources": changed});
+                    let _ = app.db.write(|c| {
+                        store::set_plan_result(c, &run_id, has, counts, &summary)?;
+                        if has {
+                            store::transition(c, &run_id, &["planning"], "planned")?;
+                            store::transition(c, &run_id, &["planned"], "applying")?;
+                        }
+                        Ok(())
+                    });
+                    if has {
+                        publish(&app, &stack_id, &run_id, "applying");
+                    }
+                }
+                _ => {}
+            })
+            .await?;
+        let stored = self.store_state()?;
+        if code != 0 {
+            bail!("tofu apply failed (exit {code})");
+        }
+        self.app.metrics.phase("plan", plan_secs);
+        self.app.metrics.phase("apply", started.elapsed().as_secs_f64() - plan_secs);
+        let resources_changed = counts.0 + counts.1 + counts.2 > 0;
+        // Output-only changes still write state: that counts as applied.
+        let status = if resources_changed || stored.is_some() { "applied" } else { "planned_and_finished" };
+        if !planned || (!resources_changed && stored.is_some()) {
+            let summary = json!({"add": counts.0, "change": counts.1, "destroy": counts.2, "resources": changed});
+            self.app.db.write(|c| store::set_plan_result(c, &run_id, stored.is_some(), counts, &summary))?;
+        }
+        self.app.db.write(|c| {
+            store::transition(c, &run_id, &["planning", "applying"], status)?;
+            store::unlock_stack(c, &stack_id, Some(&run_id))?;
+            Ok(())
+        })?;
+        if let Some(sv) = stored {
+            self.log("info", &format!("cairn: saved state version {} (serial {})", sv.id, sv.serial));
+        }
+        finish(&self.app, &stack_id, &run_id, status);
         Ok(())
     }
 
@@ -360,6 +426,9 @@ impl Exec {
         env.push(("TF_INPUT".into(), "0".into()));
         env.push(("CHECKPOINT_DISABLE".into(), "1".into()));
         env.push(("TF_PLUGIN_CACHE_DIR".into(), self.app.dir("cache/plugins").display().to_string()));
+        if self.app.cfg.engine_gogc > 0 {
+            env.push(("GOGC".into(), self.app.cfg.engine_gogc.to_string()));
+        }
         env.push(("CAIRN_RUN_ID".into(), self.run.id.clone()));
         env.push(("CAIRN_STACK_ID".into(), self.stack.id.clone()));
         let vars = self.app.db.read(|c| store::list_variables(c, &self.stack.id))?;
@@ -419,7 +488,7 @@ impl Exec {
                     if *self.cancel.borrow() {
                         // SIGINT first so tofu can release locks and write partial state.
                         if let Some(pid) = child.id() {
-                            unsafe_kill(pid);
+                            interrupt(pid);
                         }
                         let _ = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait()).await;
                         let _ = child.kill().await;
@@ -477,9 +546,16 @@ impl Exec {
     }
 }
 
-fn unsafe_kill(pid: u32) {
-    // SIGINT; best effort. std has no portable signal API, so shell out once.
-    let _ = std::process::Command::new("kill").arg("-INT").arg(pid.to_string()).status();
+/// Send SIGINT (lets tofu release locks and write partial state).
+fn interrupt(pid: u32) {
+    extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    const SIGINT: i32 = 2;
+    // SAFETY: plain syscall wrapper; pid is our own child.
+    unsafe {
+        kill(pid as i32, SIGINT);
+    }
 }
 
 /// Does any .tf file declare a `backend` or `cloud` block?
